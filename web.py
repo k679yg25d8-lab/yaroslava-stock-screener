@@ -89,7 +89,7 @@ def market():
  with engine.SCAN_LOCK:
   if time.time()-g.state['scan_at']<10:raise engine.APIError(429,'Зачекайте 10 секунд між скануваннями')
   g.state['scan_at']=time.time()
-  return jsonify(engine.scan_market(tickers,low,high,volume))
+  return jsonify(engine.scan_market(tickers,low,high,volume,request.args.get("profile","main")))
 @app.get('/api/bars')
 def bars():
  symbol=request.args.get('symbol','');frame=request.args.get('frame','day');date=request.args.get('date','')

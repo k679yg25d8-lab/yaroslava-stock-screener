@@ -26,3 +26,13 @@ export function evaluate(s,c=defaults,now=Date.now()){const type=c.setupAliases[
 }
 export function validateConfig(c){for(const [k,v]of Object.entries(defaults)){if(typeof v==='number'&&(typeof c[k]!=='number'||!Number.isFinite(c[k])||c[k]<0))throw Error(`Некоректний поріг ${k}`);if(typeof v==='boolean'&&typeof c[k]!=='boolean')throw Error(`Некоректна ознака ${k}`)}if(!Number.isInteger(c.premarketStart)||!Number.isInteger(c.premarketEnd))throw Error('Час премаркету задається цілими хвилинами');if(c.premarketStart>=c.premarketEnd||c.premarketEnd>1440)throw Error('Некоректний інтервал премаркету');if(c.priceMin>c.priceMax||c.shFloatMin>c.shFloatMax)throw Error('Мінімум перевищує максимум');if(c.refreshSeconds<10||c.staleSeconds<1)throw Error('Оновлення мінімум 10 с; актуальність мінімум 1 с');if(!c.setupAliases||typeof c.setupAliases!=='object'||Array.isArray(c.setupAliases)||!Array.isArray(c.disabledRules))throw Error('Некоректні винятки');return c}
 export function parseCSV(text){const rows=[];let row=[],value='',quoted=false;for(let i=0;i<text.length;i++){const ch=text[i];if(ch==='"'){if(quoted&&text[i+1]==='"'){value+='"';i++}else quoted=!quoted}else if(ch===','&&!quoted){row.push(value);value=''}else if((ch==='\n'||ch==='\r')&&!quoted){if(ch==='\r'&&text[i+1]==='\n')i++;row.push(value);if(row.some(x=>x))rows.push(row);row=[];value=''}else value+=ch}if(quoted)throw Error('Незакриті лапки CSV');row.push(value);if(row.some(x=>x))rows.push(row);const keys=(rows.shift()||[]).map(x=>x.trim().replace(/^\uFEFF/,''));if(!keys.includes('symbol'))throw Error('CSV потребує колонки symbol');return rows.map(r=>Object.fromEntries(keys.map((k,i)=>[k,r[i]??''])))}
+
+export function evaluateKush(s){
+ const checks=[];
+ const add=(rule,value,reason)=>checks.push({rule,state:value===null?'unknown':value?'pass':'fail',reason});
+ const price=number(s.price),avg=number(s.avgVolume),volume=number(s.premarketVolume);
+ add('price',price===null?null:price>=1.5&&price<=20,`Ціна: ${price??'—'}; $1.50–20 включно`);
+ add('avgVolume',avg===null?null:avg<2000000,`AvgVol 14: ${avg??'—'}; строго < 2 000 000`);
+ add('premarketVolume',volume===null?null:volume>=500000&&volume<=10000000,`Обсяг премаркету: ${volume??'—'}; 500 000–10 000 000 включно; понад 10 млн — виключення`);
+ return {type:s.setupType||'unknown',checks,status:checks.some(x=>x.state==='fail')?'fail':checks.some(x=>x.state==='unknown')?'review':'pass',profile:'kush'};
+}

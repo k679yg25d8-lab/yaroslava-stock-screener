@@ -70,7 +70,8 @@ def nasdaq_tickers():
 def minute_bars(symbol, date):
     key = (symbol, str(date))
     cached = BAR_CACHE.get(key)
-    if cached and time.time()-cached[0] < 5:
+    ttl = 300 if datetime.now(ZoneInfo('America/New_York')).hour*60+datetime.now(ZoneInfo('America/New_York')).minute>=570 else 5
+    if cached and time.time()-cached[0] < ttl:
         return cached[1]
     start = date - timedelta(days=7)
     data = api_json(f'/v2/aggs/ticker/{urllib.parse.quote(symbol)}/range/1/minute/{start}/{date}?adjusted=true&sort=asc&limit=50000')
@@ -185,8 +186,10 @@ def previous_activity(bars, day):
     active = False if volume is not None and volume<=300000 else result['bandTouch'] if volume is not None else None
     return {'activePreviousDays':active,'previousActivityDate':str(day),'previousPremarketVolume':volume,'previousBandTouch':result['bandTouch']}
 
-def scan_market(tickers, price_min, price_max, volume_min):
+def scan_market(tickers, price_min, price_max, volume_min, profile="main"):
     from concurrent.futures import ThreadPoolExecutor
+    if profile not in ("main","kush"):
+        raise APIError(400, "Невідомий профіль")
     listings = nasdaq_tickers()
     data = api_json('/v2/snapshot/locale/us/markets/stocks/tickers?' + urllib.parse.urlencode({'tickers':tickers}))
     if not isinstance(data.get('tickers'), list):
@@ -229,13 +232,18 @@ def scan_market(tickers, price_min, price_max, volume_min):
             'dataSource':'polygon','receivedAt':now_ms,
             'priceBasis':basis}
         rows.append(row)
-        if price is not None and price_min <= price <= price_max and stamp is not None and start_ms <= stamp < end_ms and (estimate is None or estimate > volume_min):
+        main_candidate = price is not None and price_min <= price <= price_max and stamp is not None and start_ms <= stamp < end_ms and (estimate is None or estimate > volume_min)
+        cumulative = minute.get('av') if isinstance(min_time,(int,float)) and start_ms<=min_time<=now_ms else None
+        kush_candidate = profile=='kush' and price is not None and 1.5<=price<=20 and stamp is not None and start_ms<=stamp<=now_ms and (cumulative is None or cumulative>=500000)
+        if main_candidate or kush_candidate:
             candidates.append(row)
     def enrich(row):
         try:
             bars = minute_bars(row['symbol'],now.date())
             row.update(signal_from_bars(bars,now))
-            if row.get('bandTouch') is True and isinstance(row.get('premarketVolume'),(int,float)) and row['premarketVolume']>volume_min:
+            main_setup = row.get('bandTouch') is True and isinstance(row.get('premarketVolume'),(int,float)) and row['premarketVolume']>volume_min
+            kush_setup = profile=='kush' and 1.5<=row['price']<=20 and isinstance(row.get('premarketVolume'),(int,float)) and 500000<=row['premarketVolume']<=10000000
+            if main_setup or kush_setup:
                 try:
                     row.update(daily_metrics(row['symbol'],now,bars))
                     if prior_day is not None:
