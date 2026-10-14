@@ -36,3 +36,13 @@ export function evaluateKush(s){
  add('premarketVolume',volume===null?null:volume>=500000&&volume<=10000000,`Обсяг премаркету: ${volume??'—'}; 500 000–10 000 000 включно; понад 10 млн — виключення`);
  return {type:s.setupType||'unknown',checks,status:checks.some(x=>x.state==='fail')?'fail':checks.some(x=>x.state==='unknown')?'review':'pass',profile:'kush'};
 }
+
+export function retainDay(state, rows, day){
+ if(!state||state.day!==day)state={day,main:{},kush:{}};
+ for(const {profile,s,r} of rows){
+  if(s.tradingDate!==day||s.dataSource==='demo'||r.status!=='pass')continue;
+  const group=state[profile];if(!group)continue;
+  if(!group[s.symbol])group[s.symbol]={s:structuredClone(s),r:structuredClone(r),selectedAt:Date.now()};
+ }
+ return state;
+}
