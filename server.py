@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+"""Local stock screener. API key stays in process memory."""
+import json
+import re
+import time
+import secrets
+from contextvars import ContextVar, copy_context
+import os
+import telegram_bridge as telegram
+import urllib.request
+import urllib.error
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+PORT = int(os.environ.get('SCREENER_PORT', '8765'))
+ORIGIN = f'http://127.0.0.1:{PORT}'
+CURRENT_KEY = ContextVar('polygon_key', default=None)
+NONCE = secrets.token_urlsafe(32)
+
+class APIError(Exception):
+    def __init__(self, status, message):
+        self.status, self.message = status, message
+        super().__init__(message)
+
+NASDAQ_CACHE = {'expires': 0, 'tickers': {}}
+BAR_CACHE = {}
+SCAN_LOCK = __import__('threading').Lock()
+
+def api_json(path):
+    if CURRENT_KEY.get() is None:
+        raise APIError(503, 'Введіть ключ Polygon через кнопку «Ключ API»')
+    url = urllib.parse.urlsplit(path)
+    if url.scheme:
+        if url.scheme != 'https' or url.hostname not in ('api.polygon.io', 'api.massive.com') or url.username:
+            raise APIError(502, 'Непідтримувана адреса пагінації Polygon')
+        endpoint = path
+    else:
+        endpoint = 'https://api.polygon.io' + path
+    request = urllib.request.Request(endpoint, headers={'Authorization': 'Bearer ' + CURRENT_KEY.get()})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as err:
+        raise APIError(err.code, {401:'Ключ Polygon недійсний',403:'Тариф Polygon не дає доступу до цього endpoint',429:'Ліміт запитів Polygon. Дані не підміняються.'}.get(err.code, f'Polygon HTTP {err.code}')) from None
+    except (OSError, ValueError):
+        raise APIError(502, 'Не вдалося отримати дані Polygon') from None
+
+def nasdaq_tickers():
+    if time.time() < NASDAQ_CACHE['expires']:
+        return NASDAQ_CACHE['tickers']
+    path = '/v3/reference/tickers?market=stocks&exchange=XNAS&active=true&limit=1000'
+    records, visited = {}, set()
+    while path:
+        if path in visited or len(visited) > 30:
+            raise APIError(502, 'Некоректна пагінація довідника Nasdaq')
+        visited.add(path)
+        data = api_json(path)
+        if not isinstance(data.get('results'), list):
+            raise APIError(502, 'Polygon не повернув довідник Nasdaq')
+        for item in data['results']:
+            if item.get('primary_exchange') == 'XNAS' and item.get('type') in ('CS','ADRC') and item.get('active') is True:
+                records[item['ticker']] = item
+        path = data.get('next_url')
+    NASDAQ_CACHE.update(expires=time.time()+43200, tickers=records)
+    return records
+
+def minute_bars(symbol, date):
+    key = (symbol, str(date))
+    cached = BAR_CACHE.get(key)
+    if cached and time.time()-cached[0] < 20:
+        return cached[1]
+    start = date - timedelta(days=7)
+    data = api_json(f'/v2/aggs/ticker/{urllib.parse.quote(symbol)}/range/1/minute/{start}/{date}?adjusted=true&sort=asc&limit=50000')
+    if data.get('next_url'):
+        raise APIError(422, 'Неповна історія хвилин: потрібна пагінація')
+    bars = data.get('results') or []
+    BAR_CACHE[key] = (time.time(), bars[-5000:])
+    if len(BAR_CACHE) > 1000:
+        oldest = min(BAR_CACHE, key=lambda k: BAR_CACHE[k][0])
+        del BAR_CACHE[oldest]
+    return bars[-5000:]
+
+def signal_from_bars(bars, now):
+    now_ms = int(now.timestamp()*1000)
+    start = now.replace(hour=4, minute=0, second=0, microsecond=0)
+    end = min(now, now.replace(hour=9, minute=30, second=0, microsecond=0))
+    start_ms, end_ms = int(start.timestamp()*1000), int(end.timestamp()*1000)
+    ordered = sorted((b for b in bars if isinstance(b.get('t'), (int,float)) and b['t'] <= now_ms), key=lambda b:b['t'])
+    session = [b for b in ordered if start_ms <= b['t'] < end_ms]
+    volume = sum(b['v'] for b in session if isinstance(b.get('v'), (int,float)))
+    valid_volume = bool(session) and all(isinstance(b.get('v'), (int,float)) for b in session)
+    window, total, touches = [], 0, []
+    last_band = None
+    complete = bool(session)
+    for bar in ordered:
+        window.append(bar.get('c'))
+        if len(window)>10:
+            window.pop(0)
+        valid = len(window)==10 and all(isinstance(c,(int,float)) for c in window)
+        sma = sum(window)/10 if valid else None
+        band = {'bar':bar, 'sma':sma, 'upper':sma*1.10 if sma is not None else None}
+        last_band = band
+        if start_ms <= bar['t'] < end_ms:
+            high = bar.get('h')
+            if not valid or not isinstance(high,(int,float)):
+                complete = False
+            elif high >= band['upper']:
+                touches.append(band)
+    chosen = touches[-1] if touches else last_band
+    bar = chosen['bar'] if chosen else {}
+    sma = chosen['sma'] if chosen else None
+    return {'premarketVolume': volume if valid_volume else None,
+        'volumeProvenance': 'Сума minute.v за 04:00–09:30 ET цього дня',
+        'upperBand': chosen['upper'] if chosen else None,
+        'lowerBand': sma*.90 if sma is not None else None, 'sma10':sma,
+        'signalHigh':bar.get('h'), 'signalTimestamp':bar.get('t') if touches else None,
+        'bandTouch':True if touches else False if complete else None,
+        'signalProvenance':'Торкання High ≥ SMA її 10 close × 1.10 будь-коли за цей премаркет',
+        'touchCount':len(touches)}
+
+def scan_market(tickers, price_min, price_max, volume_min):
+    from concurrent.futures import ThreadPoolExecutor
+    listings = nasdaq_tickers()
+    data = api_json('/v2/snapshot/locale/us/markets/stocks/tickers?' + urllib.parse.urlencode({'tickers':tickers}))
+    if not isinstance(data.get('tickers'), list):
+        raise APIError(502, 'Polygon не надіслав список акцій')
+    now = datetime.now(ZoneInfo('America/New_York'))
+    now_ms = int(now.timestamp()*1000)
+    rows, candidates = [], []
+    start_ms = int(now.replace(hour=4,minute=0,second=0,microsecond=0).timestamp()*1000)
+    end_ms = int(now.replace(hour=9,minute=30,second=0,microsecond=0).timestamp()*1000)
+    for t in data['tickers']:
+        listing = listings.get(t.get('ticker'))
+        if not listing:
+            continue
+        trade, minute, day = t.get('lastTrade') or {}, t.get('min') or {}, t.get('day') or {}
+        price_sources=[]
+        if isinstance(trade.get('p'),(int,float)) and trade['p']>0 and trade.get('t'):
+            price_sources.append((int(trade['t']/1e6),trade['p'],'Остання угода'))
+        if isinstance(minute.get('c'),(int,float)) and minute['c']>0 and minute.get('t'):
+            price_sources.append((minute['t'],minute['c'],'Остання хвилинна свічка'))
+        if price_sources:
+            stamp,price,basis=max(price_sources,key=lambda item:item[0])
+        else:
+            price=day.get('c') if isinstance(day.get('c'),(int,float)) and day['c']>0 else None
+            stamp,basis=None,'Денна свічка, час ціни не підтверджено'
+        prev = (t.get('prevDay') or {}).get('c')
+        min_time = minute.get('t')
+        estimate = minute.get('av') if isinstance(min_time,(int,float)) and start_ms <= min_time < end_ms else None
+        row = {'symbol':t['ticker'],'exchange':'XNAS','assetType':listing['type'],
+            'exchangeProvenance':'Polygon reference primary_exchange', 'price':price,
+            'sourceUpdatedAt':stamp,'previousClose':prev,
+            'changePercent':(price/prev-1)*100 if price is not None and isinstance(prev,(int,float)) and prev>0 else None,
+            'minuteVolume':minute.get('v'),'minuteTimestamp':min_time,
+            'premarketVolume':estimate,'volumeProvenance':'Snapshot min.av за премаркет цього дня' if estimate is not None else 'Не підтверджено',
+            'upperBand':None,'lowerBand':None,'bandTouch':None,'signalTimestamp':None,
+            'dataSource':'polygon','receivedAt':now_ms,
+            'priceBasis':basis}
+        rows.append(row)
+        if price is not None and price_min <= price <= price_max and stamp is not None and start_ms <= stamp < end_ms and (estimate is None or estimate > volume_min):
+            candidates.append(row)
+    def enrich(row):
+        try:
+            row.update(signal_from_bars(minute_bars(row['symbol'],now.date()),now))
+            row['scanStatus']='Перевірено свічки'
+        except APIError as err:
+            row['scanError']=err.message
+            row['scanStatus']='Свічки не отримано'
+        return row
+    # Exchange and price are verified before per-symbol history requests.
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        jobs = [pool.submit(copy_context().run, enrich, row) for row in candidates]
+        for job in jobs:
+            job.result()
+    return {'rows':rows,'receivedAt':now_ms,'scanSummary':{
+        'snapshotTotal':len(data['tickers']),'nasdaqStocks':len(rows),
+        'priceCandidates':sum(r['price'] is not None and price_min<=r['price']<=price_max for r in rows),
+        'candleCandidates':len(candidates),'candlesChecked':sum(r.get('scanStatus')=='Перевірено свічки' for r in candidates),
+        'candleErrors':sum(bool(r.get('scanError')) for r in candidates),
+        'priceVolumeCandidates':sum(r['price'] is not None and price_min<=r['price']<=price_max and isinstance(r.get('premarketVolume'),(int,float)) and r['premarketVolume']>volume_min for r in rows),
+        'premarketTouches':sum(r.get('bandTouch') is True for r in candidates)}}
+
