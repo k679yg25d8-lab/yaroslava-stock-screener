@@ -70,7 +70,7 @@ def nasdaq_tickers():
 def minute_bars(symbol, date):
     key = (symbol, str(date))
     cached = BAR_CACHE.get(key)
-    if cached and time.time()-cached[0] < 20:
+    if cached and time.time()-cached[0] < 5:
         return cached[1]
     start = date - timedelta(days=7)
     data = api_json(f'/v2/aggs/ticker/{urllib.parse.quote(symbol)}/range/1/minute/{start}/{date}?adjusted=true&sort=asc&limit=50000')
@@ -157,6 +157,34 @@ def daily_metrics(symbol, now, current_bars):
         'atrProvenance':'TOS: середній High − Low 14 денних свічок, включно з поточним днем; округлення 2 знаки',
         'avgVolumeProvenance':'TOS: середній обсяг попередніх 14 завершених денних свічок; округлення до акцій'}
 
+
+PREVIOUS_SESSION_CACHE = {}
+def previous_session(now):
+    key = str(now.date())
+    if key not in PREVIOUS_SESSION_CACHE:
+        start, end = now.date()-timedelta(days=14), now.date()-timedelta(days=1)
+        data = api_json(f'/v2/aggs/ticker/SPY/range/1/day/{start}/{end}?adjusted=true&sort=asc&limit=100')
+        if data.get('next_url'):
+            raise APIError(502, 'Неповний календар торгових днів')
+        days = [datetime.fromtimestamp(b['t']/1000,ZoneInfo('America/New_York')).date() for b in data.get('results',[]) if isinstance(b.get('t'),(int,float))]
+        days = [d for d in days if d<now.date()]
+        if not days:
+            raise APIError(502, 'Попередній торговий день не підтверджено')
+        PREVIOUS_SESSION_CACHE.clear()
+        PREVIOUS_SESSION_CACHE[key] = max(days)
+    return PREVIOUS_SESSION_CACHE[key]
+
+def previous_activity(bars, day):
+    at = datetime.combine(day,datetime.min.time(),tzinfo=ZoneInfo('America/New_York')).replace(hour=9,minute=30)
+    day_bars = [b for b in bars if isinstance(b.get('t'),(int,float)) and datetime.fromtimestamp(b['t']/1000,at.tzinfo).date()==day]
+    if not day_bars:
+        return {'activePreviousDays':None,'previousActivityDate':str(day),'previousActivityError':'Немає історії попереднього торгового дня'}
+    result = signal_from_bars(bars,at)
+    pm = [b for b in day_bars if 240<=datetime.fromtimestamp(b['t']/1000,at.tzinfo).hour*60+datetime.fromtimestamp(b['t']/1000,at.tzinfo).minute<570]
+    volume = result['premarketVolume'] if pm else 0
+    active = False if volume is not None and volume<=300000 else result['bandTouch'] if volume is not None else None
+    return {'activePreviousDays':active,'previousActivityDate':str(day),'previousPremarketVolume':volume,'previousBandTouch':result['bandTouch']}
+
 def scan_market(tickers, price_min, price_max, volume_min):
     from concurrent.futures import ThreadPoolExecutor
     listings = nasdaq_tickers()
@@ -165,6 +193,11 @@ def scan_market(tickers, price_min, price_max, volume_min):
         raise APIError(502, 'Polygon не надіслав список акцій')
     now = datetime.now(ZoneInfo('America/New_York'))
     now_ms = int(now.timestamp()*1000)
+    try:
+        prior_day = previous_session(now)
+        prior_error = None
+    except APIError as err:
+        prior_day, prior_error = None, err.message
     rows, candidates = [], []
     start_ms = int(now.replace(hour=4,minute=0,second=0,microsecond=0).timestamp()*1000)
     end_ms = int(now.replace(hour=9,minute=30,second=0,microsecond=0).timestamp()*1000)
@@ -205,6 +238,10 @@ def scan_market(tickers, price_min, price_max, volume_min):
             if row.get('bandTouch') is True and isinstance(row.get('premarketVolume'),(int,float)) and row['premarketVolume']>volume_min:
                 try:
                     row.update(daily_metrics(row['symbol'],now,bars))
+                    if prior_day is not None:
+                        row.update(previous_activity(bars,prior_day))
+                    else:
+                        row.update(activePreviousDays=None,previousActivityError=prior_error)
                 except APIError as err:
                     row['dailyMetricsError']=err.message
             row['scanStatus']='Перевірено свічки'
