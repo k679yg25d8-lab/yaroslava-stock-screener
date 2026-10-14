@@ -121,6 +121,42 @@ def signal_from_bars(bars, now):
         'signalProvenance':'Торкання High ≥ SMA її 10 close × 1.10 будь-коли за цей премаркет',
         'touchCount':len(touches)}
 
+
+DAILY_CACHE = {}
+def daily_metrics(symbol, now, current_bars):
+    """TOS iATR = mean daily high-low (not Wilder True Range)."""
+    import math
+    from decimal import Decimal, ROUND_HALF_UP
+    key = (symbol, str(now.date()))
+    cached = DAILY_CACHE.get(key)
+    if cached and time.time()-cached[0] < 30:
+        bars = cached[1]
+    else:
+        start = now.date()-timedelta(days=60)
+        data = api_json(f'/v2/aggs/ticker/{urllib.parse.quote(symbol)}/range/1/day/{start}/{now.date()}?adjusted=true&sort=asc&limit=50000')
+        if data.get('next_url'):
+            raise APIError(422, 'Неповна денна історія ATR / AvgVol')
+        bars = data.get('results') or []
+        DAILY_CACHE[key] = (time.time(), bars)
+        if len(DAILY_CACHE)>250:
+            del DAILY_CACHE[min(DAILY_CACHE,key=lambda k:DAILY_CACHE[k][0])]
+    zone = ZoneInfo('America/New_York')
+    valid = lambda x:isinstance(x,(int,float)) and not isinstance(x,bool) and math.isfinite(x)
+    previous = sorted((b for b in bars if valid(b.get('t')) and datetime.fromtimestamp(b['t']/1000,zone).date()<now.date()),key=lambda b:b['t'])
+    volumes = [b.get('v') for b in previous[-14:]]
+    average = sum(volumes)/14 if len(volumes)==14 and all(valid(v) and v>=0 for v in volumes) else None
+    # Current day's range uses all available minute bars through now, including premarket.
+    today = [b for b in current_bars if valid(b.get('t')) and b['t']<=now.timestamp()*1000 and datetime.fromtimestamp(b['t']/1000,zone).date()==now.date()]
+    ranges = [b['h']-b['l'] if valid(b.get('h')) and valid(b.get('l')) and b['h']>=b['l'] else None for b in previous[-13:]]
+    if today and all(valid(b.get('h')) and valid(b.get('l')) and b['h']>=b['l'] for b in today):
+        ranges.append(max(b['h'] for b in today)-min(b['l'] for b in today))
+    value = sum(ranges)/14 if len(ranges)==14 and all(valid(v) for v in ranges) else None
+    rounded = lambda value,places:float(Decimal(str(value)).quantize(Decimal(places),rounding=ROUND_HALF_UP)) if value is not None else None
+    return {'atr':rounded(value,'0.01'),'avgVolume':rounded(average,'1'),
+        'dailyMetricsDate':str(now.date()),
+        'atrProvenance':'TOS: середній High − Low 14 денних свічок, включно з поточним днем; округлення 2 знаки',
+        'avgVolumeProvenance':'TOS: середній обсяг попередніх 14 завершених денних свічок; округлення до акцій'}
+
 def scan_market(tickers, price_min, price_max, volume_min):
     from concurrent.futures import ThreadPoolExecutor
     listings = nasdaq_tickers()
@@ -164,7 +200,13 @@ def scan_market(tickers, price_min, price_max, volume_min):
             candidates.append(row)
     def enrich(row):
         try:
-            row.update(signal_from_bars(minute_bars(row['symbol'],now.date()),now))
+            bars = minute_bars(row['symbol'],now.date())
+            row.update(signal_from_bars(bars,now))
+            if row.get('bandTouch') is True and isinstance(row.get('premarketVolume'),(int,float)) and row['premarketVolume']>volume_min:
+                try:
+                    row.update(daily_metrics(row['symbol'],now,bars))
+                except APIError as err:
+                    row['dailyMetricsError']=err.message
             row['scanStatus']='Перевірено свічки'
         except APIError as err:
             row['scanError']=err.message
