@@ -105,7 +105,7 @@ def backtest_page():return send_from_directory(ROOT,'backtest.html')
 
 @app.get('/api/backtest')
 def backtest_run():
- from backtest import simulate,ZONE
+ from backtest import simulate,ZONE,previous_pm_setup
  symbol=request.args.get('symbol','').upper()
  if not re.fullmatch(r'[A-Z0-9._-]{1,20}',symbol):raise ValueError('Введіть тикер')
  start=datetime.strptime(request.args.get('start',''),'%Y-%m-%d').date()
@@ -120,6 +120,10 @@ def backtest_run():
   data=engine.api_json(f'/v2/aggs/ticker/{symbol}/range/1/{frame}/{a}/{b}?adjusted=true&sort=asc&limit=50000')
   if data.get('next_url'):raise engine.APIError(422,'Неповна історія: скоротіть період')
   return sorted(data.get('results') or [],key=lambda b:b['t'])
+ calendar_data=engine.api_json(f'/v2/aggs/ticker/SPY/range/1/day/{start-timedelta(days=14)}/{end}?adjusted=true&sort=asc&limit=100')
+ if calendar_data.get('next_url'):raise engine.APIError(422,'Неповний календар торгових днів')
+ sessions=sorted({datetime.fromtimestamp(b['t']/1000,ZONE).date().isoformat() for b in calendar_data.get('results') or []})
+ prior_cache={}
  daily=aggs('day',start-timedelta(days=30),end)
  days=[];trades=[]
  for i,b in enumerate(daily):
@@ -132,9 +136,17 @@ def backtest_run():
   minute=aggs('minute',day,day)
   if not minute:days.append(dict(day=day,status='Немає хвилинних даних'));continue
   trade=simulate(minute,daily[i-1]['c'],day)
-  if trade:trades.append(trade)
+  if trade:
+   prior_days=[d for d in sessions if d<day][-3:];checks=[]
+   if len(prior_days)!=3:days.append(dict(day=day,status='Не підтверджено 3 попередні торгові дні'));continue
+   for prior in prior_days:
+    if prior not in prior_cache:prior_cache[prior]=previous_pm_setup(aggs('minute',prior,prior),prior)
+    checks.append(prior_cache[prior])
+   if any(x and x['active'] for x in checks):days.append(dict(day=day,status='Активний сетап у попередні 3 торгові дні',priorPremarkets=checks));continue
+   if any(x is None for x in checks):days.append(dict(day=day,status='Неповна історія попередніх 3 торгових днів',priorPremarkets=checks));continue
+   trade['priorPremarkets']=checks;trades.append(trade)
   days.append(dict(day=day,status='Угода' if trade else 'Немає сигналу',minuteBars=len(minute)))
- return jsonify(symbol=symbol,start=str(start),end=str(end),trades=trades,days=days,version=5)
+ return jsonify(symbol=symbol,start=str(start),end=str(end),trades=trades,days=days,version=7)
 
 @app.get('/api/backtest-calendar')
 def backtest_calendar():
@@ -157,5 +169,5 @@ def backtest_candidates():
   if data.get('next_url'):raise engine.APIError(422,'Неповний список акцій за день')
   return data.get('results') or []
  prev={b['T']:b.get('c',0) for b in grouped(previous)}
- symbols=[b['T'] for b in grouped(day) if prev.get(b['T'],0)>0 and b.get('h',0)>prev[b['T']]*1.20 and b.get('l',999)<=20 and b.get('v',0)>=1000]
+ symbols=[b['T'] for b in grouped(day) if prev.get(b['T'],0)>0 and b.get('h',0)>prev[b['T']]*1.20 and b.get('l',999)<=20 and b.get('v',0)>=600000]
  return jsonify(symbols=sorted(set(symbols)))

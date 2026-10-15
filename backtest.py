@@ -37,7 +37,7 @@ def simulate(bars, previous_close, day):
         # Levels use only completed bars before this minute.
         if pmh and previous_close>0:
             entry=previous_close+(pmh-previous_close)*.25
-            if (360<=minute<570 and (pmh/previous_close-1)*100>20+1e-9 and band_touch is not None and 1000<=volume-b['v']<=10000000
+            if (360<=minute<570 and (pmh/previous_close-1)*100>20+1e-9 and band_touch is not None and 600000<=volume-b['v']<=10000000
                 and 0<b['o']<=20 and .5<=entry<=15 and last is not None and last>entry and b['o']>=entry and b['l']<=entry):
                 stop=entry*1.1;target=entry-(stop-entry)*3.7
                 shares=min(100000,math.floor(175/(stop-entry)))
@@ -59,3 +59,16 @@ def simulate(bars, previous_close, day):
             trade['pnl']=round((trade['entry']-trade['exit'])*trade['shares'],2)
             trade['r']=round((trade['entry']-trade['exit'])/(trade['stop']-trade['entry']),3)
     return trade
+
+
+def previous_pm_setup(bars, day):
+    """Prior-day qualification uses that day's 04:00–09:30 ET data only."""
+    daily=[b for b in bars if datetime.fromtimestamp(b['t']/1000,ZONE).date().isoformat()==day]
+    if not daily:return None
+    volume=0;closes=[];touch=False
+    for b in sorted(daily,key=lambda x:x['t']):
+        dt=datetime.fromtimestamp(b['t']/1000,ZONE);minute=dt.hour*60+dt.minute
+        if not 240<=minute<570:continue
+        volume+=b['v'];closes=(closes+[b['c']])[-10:]
+        if len(closes)==10 and b['h']>=sum(closes)/10*1.1:touch=True
+    return dict(day=day,volume=volume,bandTouch=touch,active=volume>300000 and touch)
