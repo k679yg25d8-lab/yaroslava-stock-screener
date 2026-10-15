@@ -59,7 +59,7 @@ def index():
  return text
 @app.get('/<name>')
 def assets(name):
- if name not in ('app.js','core.js','bands.js','charts.js','history.js','style.css'):return jsonify(error='Not found'),404
+ if name not in ('app.js','core.js','bands.js','charts.js','history.js','style.css','backtest.js'):return jsonify(error='Not found'),404
  return send_from_directory(ROOT,name)
 def body():
  data=request.get_json()
@@ -99,3 +99,63 @@ def bars():
  result=engine.api_json(f'/v2/aggs/ticker/{engine.urllib.parse.quote(symbol)}/range/1/{frame}/{start.date()}/{now.date()}?adjusted=true&sort=asc&limit=50000')
  if result.get('next_url'):raise engine.APIError(422,'Історія неповна: потрібна пагінація')
  return jsonify(bars=(result.get('results') or [])[-5000:],frame=frame)
+
+@app.get('/backtest')
+def backtest_page():return send_from_directory(ROOT,'backtest.html')
+
+@app.get('/api/backtest')
+def backtest_run():
+ from backtest import simulate,ZONE
+ symbol=request.args.get('symbol','').upper()
+ if not re.fullmatch(r'[A-Z0-9._-]{1,20}',symbol):raise ValueError('Введіть тикер')
+ start=datetime.strptime(request.args.get('start',''),'%Y-%m-%d').date()
+ end=datetime.strptime(request.args.get('end',''),'%Y-%m-%d').date()
+ now=datetime.now(ZONE)
+ if end<start or (end-start).days>14 or end>now.date():raise ValueError('Оберіть період до 15 календарних днів, без майбутніх дат')
+ if end==now.date() and now.hour<10:raise ValueError('Сьогоднішній бектест доступний після 10:00 ET')
+ if not g.state['key']:raise engine.APIError(503,'Підключіть ключ Polygon на головній сторінці')
+ if time.time()-g.state.get('backtest_at',0)<1:raise engine.APIError(429,'Зачекайте секунду між запусками')
+ g.state['backtest_at']=time.time()
+ def aggs(frame,a,b):
+  data=engine.api_json(f'/v2/aggs/ticker/{symbol}/range/1/{frame}/{a}/{b}?adjusted=true&sort=asc&limit=50000')
+  if data.get('next_url'):raise engine.APIError(422,'Неповна історія: скоротіть період')
+  return sorted(data.get('results') or [],key=lambda b:b['t'])
+ daily=aggs('day',start-timedelta(days=30),end)
+ days=[];trades=[]
+ for i,b in enumerate(daily):
+  date=datetime.fromtimestamp(b['t']/1000,ZONE).date()
+  if not start<=date<=end:continue
+  day=str(date)
+  if not i or daily[i-1].get('c',0)<=0:days.append(dict(day=day,status='Немає попереднього закриття'));continue
+  ref=engine.api_json(f'/v3/reference/tickers/{symbol}?date={day}').get('results') or {}
+  if ref.get('primary_exchange')!='XNAS' or ref.get('type') not in ('CS','ADRC'):days.append(dict(day=day,status='Не Nasdaq CS/ADRC'));continue
+  minute=aggs('minute',day,day)
+  if not minute:days.append(dict(day=day,status='Немає хвилинних даних'));continue
+  trade=simulate(minute,daily[i-1]['c'],day)
+  if trade:trades.append(trade)
+  days.append(dict(day=day,status='Угода' if trade else 'Немає сигналу',minuteBars=len(minute)))
+ return jsonify(symbol=symbol,start=str(start),end=str(end),trades=trades,days=days,version=1)
+
+@app.get('/api/backtest-calendar')
+def backtest_calendar():
+ from backtest import ZONE
+ year=int(request.args.get('year','2026'))
+ now=datetime.now(ZONE)
+ if year<2020 or year>now.year:raise ValueError('Некоректний рік')
+ end=min(now.date(),datetime(year,12,31).date())
+ data=engine.api_json(f'/v2/aggs/ticker/SPY/range/1/day/{year-1}-12-20/{end}?adjusted=true&sort=asc&limit=50000')
+ if data.get('next_url'):raise engine.APIError(422,'Неповний календар')
+ days=sorted({datetime.fromtimestamp(b['t']/1000,ZONE).date().isoformat() for b in data.get('results',[])})
+ return jsonify(days=[dict(day=d,previous=days[i-1]) for i,d in enumerate(days) if i and d.startswith(str(year)) and (d<str(now.date()) or now.hour>=10)])
+
+@app.get('/api/backtest-candidates')
+def backtest_candidates():
+ day=request.args.get('day','');previous=request.args.get('previous','')
+ for d in [day,previous]:datetime.strptime(d,'%Y-%m-%d')
+ def grouped(d):
+  data=engine.api_json(f'/v2/aggs/grouped/locale/us/market/stocks/{d}?adjusted=true')
+  if data.get('next_url'):raise engine.APIError(422,'Неповний список акцій за день')
+  return data.get('results') or []
+ prev={b['T']:b.get('c',0) for b in grouped(previous)}
+ symbols=[b['T'] for b in grouped(day) if prev.get(b['T'],0)>0 and b.get('h',0)>=prev[b['T']]*1.25 and b.get('l',999)<=20 and b.get('v',0)>=500000]
+ return jsonify(symbols=sorted(set(symbols)))
