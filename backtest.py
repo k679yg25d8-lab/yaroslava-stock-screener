@@ -11,7 +11,7 @@ def simulate(bars, previous_close, day):
         minute=dt.hour*60+dt.minute
         if minute<240:continue
         if minute>=600:
-            if trade and not trade.get('exit'):
+            if trade and not trade.get('exit') and minute==600:
                 trade.update(exit=b['o'],exitTime=b['t'],reason='10:00 ET')
             break
         if trade:
@@ -43,7 +43,7 @@ def simulate(bars, previous_close, day):
                 shares=min(100000,math.floor(175/(stop-entry)))
                 trade=dict(day=day,entry=entry,stop=stop,target=target,shares=shares,entryTime=b['t'],premarketVolume=volume-b['v'],pmHigh=pmh,previousClose=previous_close)
                 # Intrabar sequence unknown: allow adverse stop, never same-minute target.
-                if b['h']>=stop:trade.update(exit=max(b['o'],stop),exitTime=b['t'],reason='Стоп у свічці входу')
+                if b['h']>=stop:trade.update(exit=stop,exitTime=b['t'],reason='Стоп у свічці входу')
                 elif b['l']<=entry-2*(stop-entry):trade.update(breakeven=True,breakevenTime=b['t']+60000)
         pmh=max(pmh or b['h'],b['h']);last=b['c'];last_bar=b
     if trade:
