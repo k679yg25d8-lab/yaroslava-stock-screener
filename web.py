@@ -146,7 +146,7 @@ def backtest_run():
    if any(x is None for x in checks):days.append(dict(day=day,status='Неповна історія попередніх 3 торгових днів',priorPremarkets=checks));continue
    trade['priorPremarkets']=checks;trades.append(trade)
   days.append(dict(day=day,status='Угода' if trade else 'Немає сигналу',minuteBars=len(minute)))
- return jsonify(symbol=symbol,start=str(start),end=str(end),trades=trades,days=days,version=10)
+ return jsonify(symbol=symbol,start=str(start),end=str(end),trades=trades,days=days,version=11)
 
 @app.get('/api/backtest-calendar')
 def backtest_calendar():

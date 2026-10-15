@@ -4,12 +4,13 @@ from zoneinfo import ZoneInfo
 import math
 ZONE=ZoneInfo('America/New_York')
 def simulate(bars, previous_close, day):
-    pmh=None; pmh_time=None; volume=0; last=None; trade=None; last_bar=None; flat_bars=[]; closes=[]; band_touch=None
+    pmh=None; pmh_time=None; pm_open=None; volume=0; last=None; trade=None; last_bar=None; flat_bars=[]; closes=[]; band_touch=None
     for b in sorted(bars,key=lambda x:x['t']):
         dt=datetime.fromtimestamp(b['t']/1000,ZONE)
         if dt.date().isoformat()!=day:continue
         minute=dt.hour*60+dt.minute
         if minute<240:continue
+        if minute==240 and pm_open is None and b['o']>0:pm_open=b['o']
         if minute>=600:
             if trade and not trade.get('exit') and minute==600:
                 trade.update(exit=b['o'],exitTime=b['t'],reason='10:00 ET')
@@ -37,11 +38,11 @@ def simulate(bars, previous_close, day):
         # Levels use only completed bars before this minute.
         if pmh and previous_close>0:
             entry=previous_close+(pmh-previous_close)*.25
-            if (360<=minute<540 and pmh_time is not None and b['t']-pmh_time<=15*60000 and (pmh/previous_close-1)*100>20+1e-9 and band_touch is not None and 600000<=volume-b['v']<=10000000
+            if (360<=minute<540 and pm_open is not None and (entry-pm_open)/(entry*1.1-entry)>=.5-1e-9 and pmh_time is not None and b['t']-pmh_time<=15*60000 and (pmh/previous_close-1)*100>20+1e-9 and band_touch is not None and 600000<=volume-b['v']<=10000000
                 and 0<b['o']<=20 and .5<=entry<=15 and last is not None and last>entry and b['o']>=entry and b['l']<=entry):
                 stop=entry*1.1;target=entry-(stop-entry)*3.7
                 shares=min(100000,math.floor(175/(stop-entry)))
-                trade=dict(day=day,entry=entry,stop=stop,target=target,shares=shares,entryTime=b['t'],premarketVolume=volume-b['v'],pmHigh=pmh,pmHighTime=pmh_time,minutesFromHigh=(b['t']-pmh_time)/60000,previousClose=previous_close,bandTouchTime=band_touch['time'],bandTouchHigh=band_touch['high'],bandTouchUpper=band_touch['upper'],growthPercent=(pmh/previous_close-1)*100)
+                trade=dict(day=day,entry=entry,stop=stop,target=target,shares=shares,entryTime=b['t'],premarketVolume=volume-b['v'],pmHigh=pmh,pmHighTime=pmh_time,minutesFromHigh=(b['t']-pmh_time)/60000,previousClose=previous_close,premarketOpen=pm_open,potentialToOpenR=(entry-pm_open)/(stop-entry),bandTouchTime=band_touch['time'],bandTouchHigh=band_touch['high'],bandTouchUpper=band_touch['upper'],growthPercent=(pmh/previous_close-1)*100)
                 # Intrabar sequence unknown: allow adverse stop, never same-minute target.
                 if b['h']>=stop:trade.update(exit=stop,exitTime=b['t'],reason='Стоп у свічці входу')
                 elif b['l']<=entry-2*(stop-entry):trade.update(breakeven=True,breakevenTime=b['t']+60000)
