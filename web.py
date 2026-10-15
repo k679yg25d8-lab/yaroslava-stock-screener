@@ -134,7 +134,7 @@ def backtest_run():
   trade=simulate(minute,daily[i-1]['c'],day)
   if trade:trades.append(trade)
   days.append(dict(day=day,status='Угода' if trade else 'Немає сигналу',minuteBars=len(minute)))
- return jsonify(symbol=symbol,start=str(start),end=str(end),trades=trades,days=days,version=1)
+ return jsonify(symbol=symbol,start=str(start),end=str(end),trades=trades,days=days,version=2)
 
 @app.get('/api/backtest-calendar')
 def backtest_calendar():
@@ -157,5 +157,5 @@ def backtest_candidates():
   if data.get('next_url'):raise engine.APIError(422,'Неповний список акцій за день')
   return data.get('results') or []
  prev={b['T']:b.get('c',0) for b in grouped(previous)}
- symbols=[b['T'] for b in grouped(day) if prev.get(b['T'],0)>0 and b.get('h',0)>=prev[b['T']]*1.25 and b.get('l',999)<=20 and b.get('v',0)>=500000]
+ symbols=[b['T'] for b in grouped(day) if prev.get(b['T'],0)>0 and b.get('h',0)>=prev[b['T']]*1.25 and b.get('l',999)<=20 and b.get('v',0)>=1000]
  return jsonify(symbols=sorted(set(symbols)))
