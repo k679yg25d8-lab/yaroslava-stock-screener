@@ -37,7 +37,7 @@ def simulate(bars, previous_close, day):
         # Levels use only completed bars before this minute.
         if pmh and previous_close>0:
             entry=previous_close+(pmh-previous_close)*.25
-            if (360<=minute<570 and pmh>previous_close*1.20 and band_touch is not None and 1000<=volume-b['v']<=10000000
+            if (360<=minute<570 and (pmh/previous_close-1)*100>20+1e-9 and band_touch is not None and 1000<=volume-b['v']<=10000000
                 and 0<b['o']<=20 and .5<=entry<=15 and last is not None and last>entry and b['o']>=entry and b['l']<=entry):
                 stop=entry*1.1;target=entry-(stop-entry)*3.7
                 shares=min(100000,math.floor(175/(stop-entry)))
