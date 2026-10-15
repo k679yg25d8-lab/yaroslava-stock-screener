@@ -144,7 +144,9 @@ def daily_metrics(symbol, now, current_bars):
     zone = ZoneInfo('America/New_York')
     valid = lambda x:isinstance(x,(int,float)) and not isinstance(x,bool) and math.isfinite(x)
     previous = sorted((b for b in bars if valid(b.get('t')) and datetime.fromtimestamp(b['t']/1000,zone).date()<now.date()),key=lambda b:b['t'])
-    volumes = [b.get('v') for b in previous[-14:]]
+    # Prior-session as-of value: skip the latest completed daily candle.
+    volume_bars = previous[-15:-1]
+    volumes = [b.get('v') for b in volume_bars]
     average = sum(volumes)/14 if len(volumes)==14 and all(valid(v) and v>=0 for v in volumes) else None
     # Current day's range uses all available minute bars through now, including premarket.
     today = [b for b in current_bars if valid(b.get('t')) and b['t']<=now.timestamp()*1000 and datetime.fromtimestamp(b['t']/1000,zone).date()==now.date()]
@@ -156,7 +158,8 @@ def daily_metrics(symbol, now, current_bars):
     return {'atr':rounded(value,'0.01'),'avgVolume':rounded(average,'1'),
         'dailyMetricsDate':str(now.date()),
         'atrProvenance':'TOS: середній High − Low 14 денних свічок, включно з поточним днем; округлення 2 знаки',
-        'avgVolumeProvenance':'TOS: середній обсяг попередніх 14 завершених денних свічок; округлення до акцій'}
+        'avgVolumeAsOf':datetime.fromtimestamp(previous[-1]['t']/1000,zone).date().isoformat() if previous else None,
+        'avgVolumeProvenance':'14 завершених денних свічок станом на попередній торговий день (затримка 1 сесія); округлення до акцій'}
 
 
 PREVIOUS_SESSION_CACHE = {}
