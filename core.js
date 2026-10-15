@@ -1,4 +1,4 @@
-export const defaults={shFloatMin:0,shFloatMax:100000000,avgVolumeMax:10000000,atrMax:1,priceMin:1,priceMax:25,zakolMin:10,potentialMin:.5,premarketVolumeMin:300000,pumpPriceMin:1,pumpProfileConfirmed:false,pumpExcludePreviousDays:true,pumpExcludeRepeat:true,staleSeconds:120,refreshSeconds:10,autoRefresh:true,tickers:'',profileVersion:7,signalFreshSeconds:120,growthMin:10,minuteVolumeMin:300000,premarketStart:240,premarketEnd:570,disabledRules:['signalFreshness','shFloat','zakol','potential','repeatPump'],setupAliases:{'звичайний сетап':'normal','2памп':'second_pump','п/т':'pt','швидкий трейд':'fast','памп-тренд':'pump_trend'}};
+export const defaults={shFloatMin:0,shFloatMax:100000000,avgVolumeMax:10000000,atrMax:1,priceMin:1,priceMax:25,zakolMin:10,potentialMin:.5,premarketVolumeMin:300000,pumpPriceMin:1,pumpProfileConfirmed:false,pumpExcludePreviousDays:true,pumpExcludeRepeat:true,staleSeconds:120,refreshSeconds:10,autoRefresh:true,tickers:'',profileVersion:8,signalFreshSeconds:120,growthMin:20,minuteVolumeMin:300000,premarketStart:240,premarketEnd:570,disabledRules:['signalFreshness','shFloat','zakol','potential','repeatPump'],setupAliases:{'звичайний сетап':'normal','2памп':'second_pump','п/т':'pt','швидкий трейд':'fast','памп-тренд':'pump_trend'}};
 export const setupNames={normal:'Звичайний',second_pump:'2памп',pt:'п/т',fast:'Швидкий трейд',pump_trend:'Памп-тренд',unknown:'Невідомий'};
 export const numericFields=['price','shFloat','avgVolume','atr','zakol','potential','premarketVolume'];
 export const eventFields=['activePreviousDays','hadPremarketTrade','repumpedAround0900'];
@@ -11,6 +11,7 @@ export function evaluate(s,c=defaults,now=Date.now()){const type=c.setupAliases[
  const add=(rule,value,reason)=>checks.push({rule,state:c.disabledRules.includes(rule)?'skip':value===null?'unknown':value?'pass':'fail',reason});
  const num=(field,min,max=null,strict=false)=>{const v=number(s[field]);add(field,v===null?null:(min===null||v>=min)&&(max===null||(strict?v<max:v<=max)),`${field}: ${v??'—'}; ${min===null?'':`≥ ${min}`} ${max===null?'':`${strict?'<':'≤'} ${max}`}`)};
  num('price',c.priceMin,c.priceMax);
+ const growth=growthFromClose(s,c.growthMin);add('growth',growth.passed,`Ріст від попереднього закриття: ${growth.percent===null?'—':growth.percent.toFixed(2)+'%'}; ≥ ${c.growthMin}% (закриття ${s.previousClose??'—'})`);
  const exchange=s.exchange??s.primary_exchange;add('nasdaq',exchange==null?null:exchange==='XNAS',`Лістинг: ${exchange??'—'}; потрібен Nasdaq / XNAS`);
  const volume=number(s.premarketVolume);add('premarketVolume',volume===null?null:volume>c.premarketVolumeMin,`Накопичений обсяг премаркету: ${volume??'—'}; > ${c.premarketVolumeMin}`);
  const high=number(s.signalHigh),upper=number(s.upperBand);add('bandTouch',s.bandTouch===true?true:s.bandTouch===false?false:high===null||upper===null?null:high>=upper,`Торкання верхньої смуги: High ${high??'—'} ≥ UpperBand ${upper??'—'} (SMA 10 × 1.10)`);
@@ -31,6 +32,7 @@ export function evaluateKush(s){
  const checks=[];
  const add=(rule,value,reason)=>checks.push({rule,state:value===null?'unknown':value?'pass':'fail',reason});
  const price=number(s.price),avg=number(s.avgVolume),volume=number(s.premarketVolume);
+ const growth=growthFromClose(s,25);add('growth',growth.passed,`Ріст від попереднього закриття: ${growth.percent===null?'—':growth.percent.toFixed(2)+'%'}; ≥ 25% (закриття ${s.previousClose??'—'})`);
  add('price',price===null?null:price>=1.5&&price<=20,`Ціна: ${price??'—'}; $1.50–20 включно`);
  add('avgVolume',avg===null?null:avg<2000000,`AvgVol 14: ${avg??'—'}; строго < 2 000 000`);
  add('premarketVolume',volume===null?null:volume>=500000&&volume<=10000000,`Обсяг премаркету: ${volume??'—'}; 500 000–10 000 000 включно; понад 10 млн — виключення`);
@@ -45,4 +47,10 @@ export function retainDay(state, rows, day){
   if(!group[s.symbol])group[s.symbol]={s:structuredClone(s),r:structuredClone(r),selectedAt:Date.now()};
  }
  return state;
+}
+
+export function growthFromClose(s,minimum){
+ const price=number(s.price),previous=number(s.previousClose);
+ if(price===null||previous===null||previous<=0)return {passed:null,percent:null};
+ return {passed:price>=previous*(1+minimum/100),percent:(price/previous-1)*100};
 }
