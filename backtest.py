@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 import math
 ZONE=ZoneInfo('America/New_York')
 def simulate(bars, previous_close, day):
-    pmh=None; volume=0; last=None; trade=None; last_bar=None; flat_bars=[]
+    pmh=None; volume=0; last=None; trade=None; last_bar=None; flat_bars=[]; closes=[]; band_touch=None
     for b in sorted(bars,key=lambda x:x['t']):
         dt=datetime.fromtimestamp(b['t']/1000,ZONE)
         if dt.date().isoformat()!=day:continue
@@ -37,14 +37,20 @@ def simulate(bars, previous_close, day):
         # Levels use only completed bars before this minute.
         if pmh and previous_close>0:
             entry=previous_close+(pmh-previous_close)*.25
-            if (360<=minute<570 and pmh>=previous_close*1.25 and 1000<=volume-b['v']<=10000000
+            if (360<=minute<570 and pmh>previous_close*1.20 and band_touch is not None and 1000<=volume-b['v']<=10000000
                 and 0<b['o']<=20 and .5<=entry<=15 and last is not None and last>entry and b['o']>=entry and b['l']<=entry):
                 stop=entry*1.1;target=entry-(stop-entry)*3.7
                 shares=min(100000,math.floor(175/(stop-entry)))
-                trade=dict(day=day,entry=entry,stop=stop,target=target,shares=shares,entryTime=b['t'],premarketVolume=volume-b['v'],pmHigh=pmh,previousClose=previous_close)
+                trade=dict(day=day,entry=entry,stop=stop,target=target,shares=shares,entryTime=b['t'],premarketVolume=volume-b['v'],pmHigh=pmh,previousClose=previous_close,bandTouchTime=band_touch['time'],bandTouchHigh=band_touch['high'],bandTouchUpper=band_touch['upper'],growthPercent=(pmh/previous_close-1)*100)
                 # Intrabar sequence unknown: allow adverse stop, never same-minute target.
                 if b['h']>=stop:trade.update(exit=stop,exitTime=b['t'],reason='Стоп у свічці входу')
                 elif b['l']<=entry-2*(stop-entry):trade.update(breakeven=True,breakevenTime=b['t']+60000)
+        # A completed touch must precede the entry minute. SMA includes the touch candle close.
+        closes=(closes+[b['c']])[-10:]
+        if len(closes)==10:
+            upper=sum(closes)/10*1.1
+            if b['h']>=upper and band_touch is None:
+                band_touch=dict(time=b['t'],high=b['h'],upper=upper)
         pmh=max(pmh or b['h'],b['h']);last=b['c'];last_bar=b
     if trade:
         if not trade.get('exit'):
