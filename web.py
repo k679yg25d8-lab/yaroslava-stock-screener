@@ -134,7 +134,7 @@ def backtest_run():
   trade=simulate(minute,daily[i-1]['c'],day)
   if trade:trades.append(trade)
   days.append(dict(day=day,status='Угода' if trade else 'Немає сигналу',minuteBars=len(minute)))
- return jsonify(symbol=symbol,start=str(start),end=str(end),trades=trades,days=days,version=2)
+ return jsonify(symbol=symbol,start=str(start),end=str(end),trades=trades,days=days,version=3)
 
 @app.get('/api/backtest-calendar')
 def backtest_calendar():

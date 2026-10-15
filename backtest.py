@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 import math
 ZONE=ZoneInfo('America/New_York')
 def simulate(bars, previous_close, day):
-    pmh=None; volume=0; last=None; trade=None; last_bar=None
+    pmh=None; volume=0; last=None; trade=None; last_bar=None; flat_bars=[]
     for b in sorted(bars,key=lambda x:x['t']):
         dt=datetime.fromtimestamp(b['t']/1000,ZONE)
         if dt.date().isoformat()!=day:continue
@@ -16,8 +16,20 @@ def simulate(bars, previous_close, day):
             break
         if trade:
             if not trade.get('exit'):
-                if b['h']>=trade['stop']:trade.update(exit=max(b['o'],trade['stop']),exitTime=b['t'],reason='Стоп')
+                active_stop=trade['entry'] if trade.get('breakeven') else trade['stop']
+                if b['h']>=active_stop:trade.update(exit=max(b['o'],active_stop),exitTime=b['t'],reason='Стоп БУ' if trade.get('breakeven') else 'Стоп',stopAtExit=active_stop)
                 elif b['l']<=trade['target']:trade.update(exit=trade['target'],exitTime=b['t'],reason='Ціль 3,7R')
+                else:
+                    # Five complete consecutive minute bars after the entry candle.
+                    if flat_bars and b['t']-flat_bars[-1]['t']!=60000:flat_bars=[]
+                    flat_bars=(flat_bars+[b])[-5:]
+                    if len(flat_bars)==5:
+                        width=max(x['h'] for x in flat_bars)-min(x['l'] for x in flat_bars)
+                        limit=(trade['stop']-trade['entry'])*.1
+                        if width<=limit or math.isclose(width,limit,rel_tol=1e-10,abs_tol=1e-12):
+                            trade.update(exit=b['c'],exitTime=b['t']+60000,exitBarTime=b['t'],reason='5 хв у діапазоні',flatRange=width,flatRangeLimit=limit)
+            if not trade.get('exit') and not trade.get('breakeven') and b['l']<=trade['entry']-2*(trade['stop']-trade['entry']):
+                trade.update(breakeven=True,breakevenTime=b['t']+60000)
             last_bar=b
             continue
         if minute>=570:continue
@@ -32,6 +44,7 @@ def simulate(bars, previous_close, day):
                 trade=dict(day=day,entry=entry,stop=stop,target=target,shares=shares,entryTime=b['t'],premarketVolume=volume-b['v'],pmHigh=pmh,previousClose=previous_close)
                 # Intrabar sequence unknown: allow adverse stop, never same-minute target.
                 if b['h']>=stop:trade.update(exit=max(b['o'],stop),exitTime=b['t'],reason='Стоп у свічці входу')
+                elif b['l']<=entry-2*(stop-entry):trade.update(breakeven=True,breakevenTime=b['t']+60000)
         pmh=max(pmh or b['h'],b['h']);last=b['c'];last_bar=b
     if trade:
         if not trade.get('exit'):
