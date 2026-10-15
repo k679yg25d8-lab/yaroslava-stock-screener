@@ -142,11 +142,11 @@ def backtest_run():
    for prior in prior_days:
     if prior not in prior_cache:prior_cache[prior]=previous_pm_setup(aggs('minute',prior,prior),prior)
     checks.append(prior_cache[prior])
-   if any(x and x['active'] for x in checks):days.append(dict(day=day,status='Активний сетап у попередні 3 торгові дні',priorPremarkets=checks));continue
+   if any(x and x['active'] for x in checks):days.append(dict(day=day,status='Активність за 3 попередні дні: діапазон ≥10% або премаркетний сетап',priorPremarkets=checks));continue
    if any(x is None for x in checks):days.append(dict(day=day,status='Неповна історія попередніх 3 торгових днів',priorPremarkets=checks));continue
    trade['priorPremarkets']=checks;trades.append(trade)
   days.append(dict(day=day,status='Угода' if trade else 'Немає сигналу',minuteBars=len(minute)))
- return jsonify(symbol=symbol,start=str(start),end=str(end),trades=trades,days=days,version=7)
+ return jsonify(symbol=symbol,start=str(start),end=str(end),trades=trades,days=days,version=10)
 
 @app.get('/api/backtest-calendar')
 def backtest_calendar():
