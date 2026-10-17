@@ -37,3 +37,15 @@ main .ticker{color:#b4f0d0}main td button{color:#b3cdbf}main td button:hover{col
 main .empty{background:transparent;color:#d0e4d7}main .empty::before{color:#9fc4ae}main .foot{background:rgba(236,255,244,.04);color:#c5ddce}
 .diagnostic{background:rgba(6,24,17,.24);border-color:rgba(231,255,241,.2)}.diagnostic summary{color:#d9eadf}.diagnostic summary span,.diagnostic pre{color:#bfd7c9}
 @supports not (backdrop-filter:blur(4px)){.metrics>div{background:rgba(9,29,20,.62)}.metrics>div:has(#passed){background:rgba(15,48,30,.65)}.panel{background:rgba(9,29,20,.72)}}
+
+/* Unified forest glass dialogs */
+dialog{color-scheme:dark;background:rgba(8,29,20,.76);color:#edf8f0;border-color:rgba(217,255,231,.28);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);box-shadow:inset 0 1px 0 rgba(255,255,255,.16),0 30px 100px rgba(0,12,6,.65);scrollbar-width:thin;scrollbar-color:#507c63 #112b1e}
+dialog::backdrop{background:rgba(2,12,7,.48);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+dialog h2{color:#f0fff4;padding-right:42px}dialog h3{color:#d9f2e2}dialog p,dialog label{color:#c9ded0}dialog small,dialog pre,dialog .note,dialog summary,dialog summary span{color:#b9d5c4}
+dialog button,dialog input,dialog select,dialog textarea,dialog label input:not([type=checkbox]),dialog label select,dialog label textarea{background:rgba(230,255,240,.06);border-color:rgba(214,249,228,.22);color:#edf9f1;box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+dialog input::placeholder,dialog textarea::placeholder{color:#9cb6a6}dialog button:hover{background:rgba(219,255,234,.14);border-color:rgba(214,249,228,.4)}dialog option{background:#153325;color:#edf9f1}
+dialog .primary{background:#88dcb4;border-color:#88dcb4;color:#0b3522;font-weight:700;box-shadow:0 4px 14px #0002}dialog .primary:hover{background:#adebcb;border-color:#adebcb;color:#082c1c}
+dialog .close{position:absolute;right:19px;top:19px;float:none;background:rgba(230,255,240,.08);border:1px solid rgba(214,249,228,.17);color:#d8f0e0;box-shadow:none}dialog .close:hover{background:rgba(230,255,240,.2);color:#fff}
+dialog input[type=checkbox]{accent-color:#8cdeb5}dialog .check{border-color:rgba(215,249,227,.14)}dialog #settingsError,dialog #historyError,dialog #localKeyStatus{color:#ffb7bf}dialog #chartStatus,dialog #chartCaption{color:#bed8c8}
+dialog th{background:rgba(17,51,33,.95);color:#d4ebdd;border-color:rgba(214,249,228,.2)}dialog td{color:#e6f5eb;border-color:rgba(214,249,228,.12)}dialog tbody tr:nth-child(even){background:rgba(230,255,240,.035)}dialog tbody tr:hover,dialog #historyRows tr:hover{background:rgba(164,237,193,.12)}dialog .empty{background:transparent;color:#c4ddcd}dialog .ticker,dialog .positive,dialog .green{color:#a5efc4}dialog .negative{color:#ffb5bd}dialog .amber{color:#f0d58b}
+@supports not (backdrop-filter:blur(16px)){dialog{background:rgba(9,30,20,.96)}}
