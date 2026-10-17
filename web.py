@@ -59,7 +59,7 @@ def index():
  return text
 @app.get('/<name>')
 def assets(name):
- if name not in ('app.js','core.js','bands.js','charts.js','history.js','style.css'):return jsonify(error='Not found'),404
+ if name not in ('app.js','core.js','bands.js','charts.js','history.js','style.css','dark-forest.png'):return jsonify(error='Not found'),404
  return send_from_directory(ROOT,name)
 def body():
  data=request.get_json()
