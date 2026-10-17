@@ -25,3 +25,14 @@ main{min-height:calc(100vh - 78px)}
 .note{color:#c8d9ce;text-shadow:0 1px 5px #0008}
 dialog{box-shadow:0 30px 100px rgba(0,12,6,.6)}
 @media(max-width:700px){body{background-attachment:scroll;background-position:50% 0}.metrics>div{box-shadow:0 8px 20px rgba(0,9,5,.3),0 2px 5px rgba(0,9,5,.14)}.panel{box-shadow:0 12px 30px rgba(0,9,5,.34)}}
+
+/* Frosted forest cards */
+.metrics>div{background:rgba(249,253,251,.72);border-color:rgba(255,255,255,.42);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.metrics>div:has(#passed){background:rgba(223,248,234,.76);border-color:rgba(198,238,216,.55)}
+.metrics small{color:#3e5b51}.metrics strong{color:#18382d}.metrics .green{color:#086d45}.metrics .amber{color:#805a0f}
+.panel{background:rgba(248,252,250,.82);border-color:rgba(255,255,255,.44);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+.toolbar{background:rgba(255,255,255,.26);border-bottom-color:rgba(95,129,112,.2)}nav{background:rgba(228,239,233,.6);border-color:rgba(255,255,255,.4)}nav button.active{background:rgba(255,255,255,.85)}
+th{background:rgba(232,243,237,.94);color:#365446;border-bottom-color:rgba(95,129,112,.25)}td{color:#213f33;border-bottom-color:rgba(95,129,112,.16)}tbody tr:nth-child(even){background:rgba(255,255,255,.18)}tbody tr:hover,tbody tr:nth-child(even):hover{background:rgba(224,246,235,.76)}
+.empty{background:rgba(255,255,255,.08);color:#405e50}.empty::before{color:#658676}.foot{background:rgba(255,255,255,.24);color:#405e50}
+.diagnostic{background:rgba(239,249,243,.74);border-color:rgba(255,255,255,.38)}
+@supports not (backdrop-filter:blur(12px)){.metrics>div{background:rgba(249,253,251,.9)}.metrics>div:has(#passed){background:rgba(223,248,234,.92)}.panel{background:rgba(248,252,250,.94)}}
