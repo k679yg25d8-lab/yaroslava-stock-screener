@@ -26,13 +26,14 @@ main{min-height:calc(100vh - 78px)}
 dialog{box-shadow:0 30px 100px rgba(0,12,6,.6)}
 @media(max-width:700px){body{background-attachment:scroll;background-position:50% 0}.metrics>div{box-shadow:0 8px 20px rgba(0,9,5,.3),0 2px 5px rgba(0,9,5,.14)}.panel{box-shadow:0 12px 30px rgba(0,9,5,.34)}}
 
-/* Frosted forest cards */
-.metrics>div{background:rgba(249,253,251,.72);border-color:rgba(255,255,255,.42);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
-.metrics>div:has(#passed){background:rgba(223,248,234,.76);border-color:rgba(198,238,216,.55)}
-.metrics small{color:#3e5b51}.metrics strong{color:#18382d}.metrics .green{color:#086d45}.metrics .amber{color:#805a0f}
-.panel{background:rgba(248,252,250,.82);border-color:rgba(255,255,255,.44);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
-.toolbar{background:rgba(255,255,255,.26);border-bottom-color:rgba(95,129,112,.2)}nav{background:rgba(228,239,233,.6);border-color:rgba(255,255,255,.4)}nav button.active{background:rgba(255,255,255,.85)}
-th{background:rgba(232,243,237,.94);color:#365446;border-bottom-color:rgba(95,129,112,.25)}td{color:#213f33;border-bottom-color:rgba(95,129,112,.16)}tbody tr:nth-child(even){background:rgba(255,255,255,.18)}tbody tr:hover,tbody tr:nth-child(even):hover{background:rgba(224,246,235,.76)}
-.empty{background:rgba(255,255,255,.08);color:#405e50}.empty::before{color:#658676}.foot{background:rgba(255,255,255,.24);color:#405e50}
-.diagnostic{background:rgba(239,249,243,.74);border-color:rgba(255,255,255,.38)}
-@supports not (backdrop-filter:blur(12px)){.metrics>div{background:rgba(249,253,251,.9)}.metrics>div:has(#passed){background:rgba(223,248,234,.92)}.panel{background:rgba(248,252,250,.94)}}
+/* Clear forest glass */
+.metrics>div{background:rgba(238,255,246,.08);border-color:rgba(231,255,241,.28);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);box-shadow:inset 0 1px 0 rgba(255,255,255,.16),0 12px 28px rgba(0,9,5,.3)}
+.metrics>div:has(#passed){background:rgba(96,207,149,.1);border-color:rgba(153,231,185,.33)}
+.metrics small{color:#c1d8cb}.metrics strong{color:#f0fff5;text-shadow:0 1px 5px #0006}.metrics .green{color:#9ceac0}.metrics .amber{color:#f1d78f}
+.panel{background:rgba(6,24,17,.28);border-color:rgba(231,255,241,.25);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 18px 45px rgba(0,9,5,.35)}
+.toolbar{background:rgba(239,255,246,.04);border-bottom-color:rgba(231,255,241,.18)}nav{background:rgba(236,255,244,.05);border-color:rgba(231,255,241,.16)}nav button{color:#d5e9dd}nav button:hover{background:rgba(236,255,244,.13);color:#fff}nav button.active{background:rgba(238,255,246,.87);color:#10573d;border-color:rgba(255,255,255,.6)}
+main th{background:rgba(12,37,26,.88);color:#d4e9dc;border-bottom-color:rgba(231,255,241,.2)}main th button:hover{color:#a5edc6}main td{color:#e4f2e9;border-bottom-color:rgba(231,255,241,.12)}main tbody tr:nth-child(even){background:rgba(236,255,244,.035)}main tbody tr:hover,main tbody tr:nth-child(even):hover{background:rgba(166,234,193,.13)}
+main .ticker{color:#b4f0d0}main td button{color:#b3cdbf}main td button:hover{color:#edfff3;background:rgba(211,255,230,.12);border-color:rgba(211,255,230,.3)}main .positive{color:#9ceac0}main .negative{color:#ffb5bd}
+main .empty{background:transparent;color:#d0e4d7}main .empty::before{color:#9fc4ae}main .foot{background:rgba(236,255,244,.04);color:#c5ddce}
+.diagnostic{background:rgba(6,24,17,.24);border-color:rgba(231,255,241,.2)}.diagnostic summary{color:#d9eadf}.diagnostic summary span,.diagnostic pre{color:#bfd7c9}
+@supports not (backdrop-filter:blur(4px)){.metrics>div{background:rgba(9,29,20,.62)}.metrics>div:has(#passed){background:rgba(15,48,30,.65)}.panel{background:rgba(9,29,20,.72)}}
