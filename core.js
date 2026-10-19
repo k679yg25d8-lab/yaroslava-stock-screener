@@ -54,3 +54,5 @@ export function growthFromClose(s,minimum,premarket=false){
  if(price===null||previous===null||previous<=0)return {passed:null,percent:null};
  return {passed:price>=previous*(1+minimum/100),percent:(price/previous-1)*100};
 }
+
+export function sessionWindow(now=Date.now()){const parts=new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).formatToParts(new Date(now));const get=t=>Number(parts.find(p=>p.type===t).value),minute=get("hour")*60+get("minute");return {scan:minute>=240&&minute<570,retain:minute>=240&&minute<720}}
