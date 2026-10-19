@@ -57,3 +57,6 @@ dialog th{background:rgba(17,51,33,.95);color:#d4ebdd;border-color:rgba(214,249,
 .kush-toast strong{display:block;color:#c1f4d5;font-size:14px}.kush-toast p{color:#e1f3e8;margin:9px 0 13px;overflow-wrap:anywhere;font-size:13px}.kush-toast .actions{justify-content:space-between}.kush-toast .primary{background:#9ae3bb;color:#103a25;border-color:#9ae3bb;font-size:11px}.kush-toast button:not(.primary){background:transparent;color:#d8f5e4;border-color:#ffffff30;padding:7px 10px}
 #kushAlertsSettings{width:min(620px,94vw)}#kushAlertsSettings label{display:flex;align-items:center;gap:10px}#kushAlertsSettings input[type=checkbox]{width:16px;height:16px;flex-shrink:0}#kushAlertStatus{font-size:12px;color:#c1decd}
 @media(max-width:700px){#kushAlertToasts{right:14px;bottom:14px}.kush-toast{padding:14px}}
+
+/* Daily traded checkmarks */
+.trade-mark{display:flex;align-items:center;gap:6px;margin:7px 0 0;font-size:11px;color:#d6f1e3;cursor:pointer;white-space:nowrap}.trade-mark input{width:16px;height:16px;margin:0;accent-color:#a9e6c1;cursor:pointer}.trade-mark:has(input:checked){color:#a9e6c1}
