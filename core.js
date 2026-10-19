@@ -1,4 +1,4 @@
-export const defaults={shFloatMin:0,shFloatMax:100000000,avgVolumeMax:10000000,atrMax:1,priceMin:1,priceMax:25,zakolMin:10,potentialMin:.5,premarketVolumeMin:300000,pumpPriceMin:1,pumpProfileConfirmed:false,pumpExcludePreviousDays:true,pumpExcludeRepeat:true,staleSeconds:120,refreshSeconds:10,autoRefresh:true,tickers:'',profileVersion:8,signalFreshSeconds:120,growthMin:20,minuteVolumeMin:300000,premarketStart:240,premarketEnd:570,disabledRules:['signalFreshness','shFloat','zakol','potential','repeatPump'],setupAliases:{'звичайний сетап':'normal','2памп':'second_pump','п/т':'pt','швидкий трейд':'fast','памп-тренд':'pump_trend'}};
+export const defaults={shFloatMin:0,shFloatMax:100000000,avgVolumeMax:10000000,atrMax:1,priceMin:1.2,priceMax:25,zakolMin:10,potentialMin:.5,premarketVolumeMin:300000,pumpPriceMin:1,pumpProfileConfirmed:false,pumpExcludePreviousDays:true,pumpExcludeRepeat:true,staleSeconds:120,refreshSeconds:10,autoRefresh:true,tickers:'',profileVersion:9,signalFreshSeconds:120,growthMin:20,minuteVolumeMin:300000,premarketStart:240,premarketEnd:570,disabledRules:['signalFreshness','shFloat','zakol','potential','repeatPump'],setupAliases:{'звичайний сетап':'normal','2памп':'second_pump','п/т':'pt','швидкий трейд':'fast','памп-тренд':'pump_trend'}};
 export const setupNames={normal:'Звичайний',second_pump:'2памп',pt:'п/т',fast:'Швидкий трейд',pump_trend:'Памп-тренд',unknown:'Невідомий'};
 export const numericFields=['price','shFloat','avgVolume','atr','zakol','potential','premarketVolume'];
 export const eventFields=['activePreviousDays','hadPremarketTrade','repumpedAround0900'];
@@ -20,7 +20,7 @@ export function evaluate(s,c=defaults,now=Date.now()){const type=c.setupAliases[
  const inSession=stamp!==null&&tradingDate(stamp)===tradingDate(now)&&isPremarket(stamp,c);
  add('signalFreshness',stamp===null?null:inSession&&age>=-5000&&age<=c.signalFreshSeconds*1000,`Свіжість пампу: ${age===null?'час невідомий':Math.round(age/1000)+' с'}; останні ${c.signalFreshSeconds} с у премаркеті`);
  add('premarketSession',isPremarket(now,c),`Премаркет: ${String(Math.floor(c.premarketStart/60)).padStart(2,'0')}:${String(c.premarketStart%60).padStart(2,'0')}–${String(Math.floor(c.premarketEnd/60)).padStart(2,'0')}:${String(c.premarketEnd%60).padStart(2,'0')} ET`);
- for(const[field,min,max,strict]of [['shFloat',c.shFloatMin,c.shFloatMax,false],['avgVolume',null,c.avgVolumeMax,true],['atr',null,c.atrMax,true],['zakol',c.zakolMin,null,false],['potential',c.potentialMin,null,false]])if(!c.disabledRules.includes(field))num(field,min,max,strict);
+ for(const[field,min,max,strict]of [['shFloat',c.shFloatMin,c.shFloatMax,false],['avgVolume',null,c.avgVolumeMax,false],['atr',null,c.atrMax,true],['zakol',c.zakolMin,null,false],['potential',c.potentialMin,null,false]])if(!c.disabledRules.includes(field))num(field,min,max,strict);
  if(!c.disabledRules.includes('activePreviousDays')){const active=boolean(s.activePreviousDays);add('activePreviousDays',active===null?null:!active,`Попередній премаркет ${s.previousActivityDate||'—'}: сетап ${active===true?'був':active===false?'не було':'невідомо'}; обсяг ${s.previousPremarketVolume??'—'}; торкання UpperBand ${s.previousBandTouch??'—'}`)}
  if(!c.disabledRules.includes('repeatPump')){const trade=boolean(s.hadPremarketTrade),repeat=boolean(s.repumpedAround0900);add('repeatPump',trade===false||repeat===false?true:trade===true&&repeat===true?false:null,`PM-угода: ${trade??'—'}; повторний памп: ${repeat??'—'}`)}
  return {type,checks,status:checks.some(x=>x.state==='fail')?'fail':checks.some(x=>x.state==='unknown')?'review':'pass'};
@@ -33,7 +33,7 @@ export function evaluateKush(s){
  const add=(rule,value,reason)=>checks.push({rule,state:value===null?'unknown':value?'pass':'fail',reason});
  const price=number(s.price),avg=number(s.avgVolume),volume=number(s.premarketVolume);
  const growth=growthFromClose(s,25);add('growth',growth.passed,`Ріст від попереднього закриття: ${growth.percent===null?'—':growth.percent.toFixed(2)+'%'}; ≥ 25% (закриття ${s.previousClose??'—'})`);
- add('price',price===null?null:price>=1.5&&price<=20,`Ціна: ${price??'—'}; $1.50–20 включно`);
+ add('price',price===null?null:price>=2&&price<=20,`Ціна: ${price??'—'}; $2–20 включно`);
  add('avgVolume',avg===null?null:avg<2000000,`AvgVol 14: ${avg??'—'}; строго < 2 000 000`);
  add('premarketVolume',volume===null?null:volume>=500000&&volume<=10000000,`Обсяг премаркету: ${volume??'—'}; 500 000–10 000 000 включно; понад 10 млн — виключення`);
  return {type:s.setupType||'unknown',checks,status:checks.some(x=>x.state==='fail')?'fail':checks.some(x=>x.state==='unknown')?'review':'pass',profile:'kush'};
