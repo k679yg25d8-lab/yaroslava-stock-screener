@@ -31,7 +31,8 @@ function syncRetained(){
 function displayDecision(s,raw=s){
  const profile=tab==='kush'?'kush':'main';
  const r=mode==='archive'&&raw.savedResult?raw.savedResult:profile==='kush'?evaluateKush(s):evaluate(s,config);
- const kept=mode!=='archive'&&mode!=='demo'&&s.tradingDate===tradingDate()&&retained.day===tradingDate()&&retained[profile]?.[s.symbol];
+ const growthAllowed=profile!=='main'||r.checks.find(c=>c.rule==='growth')?.state==='pass';
+ const kept=growthAllowed&&mode!=='archive'&&mode!=='demo'&&s.tradingDate===tradingDate()&&retained.day===tradingDate()&&retained[profile]?.[s.symbol];
  return kept&&(tab==='pass'||tab==='kush')?{...r,status:'pass',retained:true,currentStatus:r.status}:r;
 }
 const statusNames={pass:'Підходить',fail:'Не підходить',review:'Потрібна перевірка'},stateNames={pass:'Пройдено',fail:'Не пройдено',unknown:'Невідомо',skip:'Не застосовується'};
