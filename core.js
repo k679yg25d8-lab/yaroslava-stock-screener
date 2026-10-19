@@ -11,7 +11,7 @@ export function evaluate(s,c=defaults,now=Date.now()){const type=c.setupAliases[
  const add=(rule,value,reason)=>checks.push({rule,state:c.disabledRules.includes(rule)?'skip':value===null?'unknown':value?'pass':'fail',reason});
  const num=(field,min,max=null,strict=false)=>{const v=number(s[field]);add(field,v===null?null:(min===null||v>=min)&&(max===null||(strict?v<max:v<=max)),`${field}: ${v??'—'}; ${min===null?'':`≥ ${min}`} ${max===null?'':`${strict?'<':'≤'} ${max}`}`)};
  num('price',c.priceMin,c.priceMax);
- const growth=growthFromClose(s,c.growthMin,true);add('growth',growth.passed,`Максимальний ріст премаркету від попереднього закриття: ${growth.percent===null?'—':growth.percent.toFixed(2)+'%'}; > ${c.growthMin}% (закриття ${s.previousClose??'—'})`);
+ const growth=growthFromClose(s,c.growthMin,true);add('growth',growth.passed,`Максимальний ріст премаркету від попереднього закриття: ${growth.percent===null?'—':growth.percent.toFixed(2)+'%'}; ≥ ${c.growthMin}% (закриття ${s.previousClose??'—'})`);
  const exchange=s.exchange??s.primary_exchange;add('nasdaq',exchange==null?null:exchange==='XNAS',`Лістинг: ${exchange??'—'}; потрібен Nasdaq / XNAS`);
  const volume=number(s.premarketVolume);add('premarketVolume',volume===null?null:volume>c.premarketVolumeMin,`Накопичений обсяг премаркету: ${volume??'—'}; > ${c.premarketVolumeMin}`);
  const high=number(s.signalHigh),upper=number(s.upperBand);add('bandTouch',s.bandTouch===true?true:s.bandTouch===false?false:high===null||upper===null?null:high>=upper,`Торкання верхньої смуги: High ${high??'—'} ≥ UpperBand ${upper??'—'} (SMA 10 × 1.10)`);
@@ -52,5 +52,5 @@ export function retainDay(state, rows, day){
 export function growthFromClose(s,minimum,premarket=false){
  const price=number(premarket?s.premarketHigh:s.price),previous=number(s.previousClose);
  if(price===null||previous===null||previous<=0)return {passed:null,percent:null};
- return {passed:premarket?price>previous*(1+minimum/100):price>=previous*(1+minimum/100),percent:(price/previous-1)*100};
+ return {passed:price>=previous*(1+minimum/100),percent:(price/previous-1)*100};
 }
