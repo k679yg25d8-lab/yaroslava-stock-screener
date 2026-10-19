@@ -113,7 +113,8 @@ def signal_from_bars(bars, now):
     chosen = touches[-1] if touches else last_band
     bar = chosen['bar'] if chosen else {}
     sma = chosen['sma'] if chosen else None
-    return {'premarketVolume': volume if valid_volume else None,
+    return {'premarketHigh': max((b['h'] for b in session if isinstance(b.get('h'),(int,float))),default=None),
+        'premarketVolume': volume if valid_volume else None,
         'volumeProvenance': 'Сума minute.v за 04:00–09:30 ET цього дня',
         'upperBand': chosen['upper'] if chosen else None,
         'lowerBand': sma*.90 if sma is not None else None, 'sma10':sma,
@@ -244,6 +245,8 @@ def scan_market(tickers, price_min, price_max, volume_min, profile="main"):
         try:
             bars = minute_bars(row['symbol'],now.date())
             row.update(signal_from_bars(bars,now))
+            high,previous=row.get('premarketHigh'),row.get('previousClose')
+            row['premarketGrowthPercent']=(high/previous-1)*100 if isinstance(high,(int,float)) and isinstance(previous,(int,float)) and previous>0 else None
             main_setup = row.get('bandTouch') is True and isinstance(row.get('premarketVolume'),(int,float)) and row['premarketVolume']>volume_min
             kush_setup = profile=='kush' and 1.5<=row['price']<=20 and isinstance(row.get('premarketVolume'),(int,float)) and 500000<=row['premarketVolume']<=10000000
             if main_setup or kush_setup:
