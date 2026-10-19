@@ -1,3 +1,4 @@
+import {createKushAlerts} from './alerts.js';
 import {record,dates,getDay} from './history.js';
 import {zakolBands} from './bands.js';
 import {candleChart} from './charts.js';
@@ -15,11 +16,13 @@ let favorites=new Set(read('screener.favorites',[])),manual=read('screener.manua
 let collapsedStocks=read('screener.collapsed',{});
 function collapseKey(s){return `${s.tradingDate||tradingDate()}:${s.dataSource}:${s.symbol}`}
 let retained=retainDay(read('screener.retained',null),[],tradingDate());
+const kushAlerts=createKushAlerts({day:tradingDate,seed:Object.values(retained.kush).map(x=>x.s),onOpen:()=>{document.querySelectorAll('dialog[open]').forEach(d=>d.close());$('search').value='';$('setupFilter').value='';$('tabs').querySelector("[data-tab=kush]")?.click()}});
 function syncRetained(){
  if(mode==='demo'||mode==='archive')return;
  const day=tradingDate(),rows=[];
  for(const raw of stocks.values()){const s=effective(raw);rows.push({profile:'main',s,r:evaluate(s,config)},{profile:'kush',s,r:evaluateKush(s)})}
- const before=JSON.stringify(retained);retained=retainDay(retained,rows,day);
+ const knownKush=new Set(retained.day===day?Object.keys(retained.kush):[]);const before=JSON.stringify(retained);retained=retainDay(retained,rows,day);
+ kushAlerts.notify(Object.entries(retained.kush).filter(([symbol])=>!knownKush.has(symbol)).map(([,item])=>item.s),day);
  if(before!==JSON.stringify(retained)){save('screener.retained',retained);const newly=rows.filter(x=>x.r.status==='pass'&&x.s.tradingDate===day);record(newly,day).catch(e=>log('Журнал: '+e.message))}
  for(const group of [retained.main,retained.kush])for(const item of Object.values(group))if(!stocks.has(item.s.symbol))stocks.set(item.s.symbol,{...item.s});
 }
