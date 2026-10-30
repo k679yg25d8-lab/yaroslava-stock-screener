@@ -9,7 +9,7 @@ def completed(bars, now):
             or (datetime.fromtimestamp(b['t']/1000, ZoneInfo('America/New_York')).date() == today and (now.hour, now.minute) >= (16,15))]
 
 def daily(symbol, now):
-    start = now.date()-timedelta(days=900)
+    start = min(now.date()-timedelta(days=550), datetime(2025,1,1).date())
     data=engine.api_json(f'/v2/aggs/ticker/{engine.urllib.parse.quote(symbol)}/range/1/day/{start}/{now.date()}?adjusted=true&sort=asc&limit=50000')
     if data.get('next_url'):raise engine.APIError(422,'Неповна денна історія')
     return completed(data.get('results') or [],now)
