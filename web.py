@@ -6,9 +6,10 @@ from zoneinfo import ZoneInfo
 from flask import Flask,request,session,jsonify,send_from_directory,g
 from werkzeug.exceptions import HTTPException
 import server as engine
+import swing,trend_backtest
 ROOT=Path(__file__).resolve().parent
 app=Flask(__name__,static_folder=None)
-app.config.update(SECRET_KEY=os.environ.get('SESSION_SECRET') or secrets.token_hex(32),MAX_CONTENT_LENGTH=3000,SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Lax',SESSION_COOKIE_SECURE=os.environ.get('LOCAL_PREVIEW')!='1',PERMANENT_SESSION_LIFETIME=timedelta(hours=8))
+app.config.update(SECRET_KEY=os.environ.get('SESSION_SECRET') or secrets.token_hex(32),MAX_CONTENT_LENGTH=1000000,SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Lax',SESSION_COOKIE_SECURE=os.environ.get('LOCAL_PREVIEW')!='1',PERMANENT_SESSION_LIFETIME=timedelta(hours=8))
 STATES={};LOCK=threading.Lock()
 def new_bridge():
  spec=importlib.util.spec_from_file_location('visitor_telegram',ROOT/'telegram_bridge.py')
@@ -57,9 +58,12 @@ def index():
  text=(ROOT/'terminal.html').read_text().replace('<body>',f'<body><meta name="local-nonce" content="{g.state["nonce"]}">')
  text=text.replace('Ключ передається локальному серверу','Ключ передається серверу цього сайту через HTTPS').replace('Після закриття програми його потрібно ввести знову.','Після перезапуску сервера ключ потрібно ввести знову.').replace('лише в пам’яті сервера.','лише в пам’яті сервера для вашого браузера.')
  return text
+@app.get('/market')
+def swing_page():
+ return (ROOT/'market.html').read_text().replace('<body>',f'<body><meta name="local-nonce" content="{g.state["nonce"]}">')
 @app.get('/<name>')
 def assets(name):
- if name not in ('app.js','alerts.js','core.js','bands.js','charts.js','history.js','style.css','dark-forest.png'):return jsonify(error='Not found'),404
+ if name not in ('market.js','app.js','alerts.js','core.js','bands.js','charts.js','history.js','style.css','dark-forest.png'):return jsonify(error='Not found'),404
  return send_from_directory(ROOT,name)
 def body():
  data=request.get_json()
@@ -99,3 +103,79 @@ def bars():
  result=engine.api_json(f'/v2/aggs/ticker/{engine.urllib.parse.quote(symbol)}/range/1/{frame}/{start.date()}/{now.date()}?adjusted=true&sort=asc&limit=50000')
  if result.get('next_url'):raise engine.APIError(422,'Історія неповна: потрібна пагінація')
  return jsonify(bars=(result.get('results') or [])[-5000:],frame=frame)
+
+@app.get('/api/swing/universe')
+def swing_universe():
+ limit=int(request.args.get('limit','100'))
+ if limit not in (50,100,300):raise ValueError('Оберіть 50, 100 або 300 акцій')
+ return jsonify(swing.universe(limit))
+
+@app.get('/api/swing/batch')
+def swing_batch():
+ symbols=request.args.get('symbols','').upper().split(',')
+ if not 1<=len(symbols)<=8 or any(not re.fullmatch(r'[A-Z0-9._-]{1,20}',s) for s in symbols):raise ValueError('Некоректні тикери')
+ now=datetime.now(ZoneInfo('America/New_York'));state=g.state
+ benchmark_stamp=now.date().isoformat()+str((now.hour,now.minute)>=(16,15))
+ if state.get('swing_benchmark_day')!=benchmark_stamp:
+  state['swing_benchmark']=swing.daily('SPY',now);state['swing_benchmark_day']=benchmark_stamp
+ benchmark=state['swing_benchmark'];rows=[];errors=[]
+ for symbol in symbols:
+  try:rows.append(dict(symbol=symbol,**swing.metrics(swing.daily(symbol,now),benchmark)))
+  except (engine.APIError,ValueError) as exc:errors.append({'symbol':symbol,'error':getattr(exc,'message',str(exc))})
+ return jsonify(rows=rows,errors=errors)
+
+BACKTEST_LOCK=threading.Lock()
+@app.post('/api/trend-test')
+def start_trend_test():
+ data=body();raw=data.get('rows');settings=data.get('settings',{})
+ if not isinstance(raw,list) or not 1<=len(raw)<=20000:raise ValueError('Завантажте CSV, до 20 000 записів')
+ allowed={}
+ for row in raw:
+  symbol=row.get('ticker','');day=row.get('date','')
+  if not re.fullmatch(r'[A-Z0-9._-]{1,20}',symbol) or not re.fullmatch(r'2026-\d{2}-\d{2}',day):raise ValueError('Потрібні тикери й дати 2026 року')
+  datetime.strptime(day,'%Y-%m-%d');allowed.setdefault(symbol,set()).add(day)
+ if len(allowed)>2000:raise ValueError('До 2000 унікальних тикерів')
+ clean={}
+ for name,default,low,high in [('capital',10000,100,1e9),('fee',1,0,1000),('slippage',.1,0,10),('minVolume',500000,0,1e10),('minDollar',10000000,0,1e12)]:
+  value=float(settings.get(name,default))
+  if not __import__('math').isfinite(value) or not low<=value<=high:raise ValueError('Некоректне значення '+name)
+  clean[name]=value
+ now=datetime.now(ZoneInfo('America/New_York'));clean.update(start='2026-01-01',end=now.date().isoformat())
+ if not g.state['key']:raise engine.APIError(503,'Спочатку підключіть ключ Polygon')
+ if not BACKTEST_LOCK.acquire(blocking=False):raise engine.APIError(409,'На сервері вже виконується бектест. Дочекайтеся завершення.')
+ state=g.state;job={'status':'running','done':0,'total':len(allowed),'errors':[],'cancel':False};state['trend_job']=job
+ key=state['key']
+ def work():
+  token=engine.CURRENT_KEY.set(key)
+  try:
+   benchmark=swing.daily('SPY',now);prepared={}
+   if not any(clean['start']<=d<=clean['end'] for d in trend_backtest.features(benchmark)):raise ValueError('Немає повної історії SPY для SMA 200 та періоду 2026')
+   for symbol in sorted(allowed):
+    if job['cancel']:job['status']='cancelled';return
+    try:
+     bars=swing.daily(symbol,now)
+     f=trend_backtest.features(bars)
+     if not f:raise ValueError('Недостатньо історії для SMA 200')
+     filtered={d:v for d,v in f.items() if clean['start']<=d<=clean['end']}
+     if not filtered:raise ValueError('Немає денних даних за період тесту')
+     prepared[symbol]=filtered
+    except (engine.APIError,ValueError) as exc:
+     if isinstance(exc,engine.APIError) and exc.status in (401,403,429):raise
+     job['errors'].append({'symbol':symbol,'error':getattr(exc,'message',str(exc))})
+    job['done']+=1
+   job['result']=trend_backtest.simulate(prepared,benchmark,allowed,clean,prepared=True)
+   job['result']['coverage']={'loaded':len(prepared),'requested':len(allowed),'errors':job['errors']}
+   job['status']='done'
+  except Exception as exc:job.update(status='error',error=getattr(exc,'message','Помилка обчислення: '+str(exc)[:160]))
+  finally:engine.CURRENT_KEY.reset(token);BACKTEST_LOCK.release()
+ threading.Thread(target=work,daemon=True).start()
+ return jsonify(status='running',total=job['total'])
+
+@app.get('/api/trend-test')
+def trend_status():return jsonify(g.state.get('trend_job') or {'status':'idle'})
+
+@app.post('/api/trend-test/cancel')
+def trend_cancel():
+ body()
+ if g.state.get('trend_job'):g.state['trend_job']['cancel']=True
+ return jsonify(cancelled=True)
