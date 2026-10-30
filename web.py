@@ -63,7 +63,7 @@ def swing_page():
  return (ROOT/'market.html').read_text().replace('<body>',f'<body><meta name="local-nonce" content="{g.state["nonce"]}">')
 @app.get('/<name>')
 def assets(name):
- if name not in ('market.js','app.js','alerts.js','core.js','bands.js','charts.js','history.js','style.css','dark-forest.png'):return jsonify(error='Not found'),404
+ if name not in ('market-journal.js','market.js','app.js','alerts.js','core.js','bands.js','charts.js','history.js','style.css','dark-forest.png'):return jsonify(error='Not found'),404
  return send_from_directory(ROOT,name)
 def body():
  data=request.get_json()
@@ -136,7 +136,7 @@ def start_trend_test():
   datetime.strptime(day,'%Y-%m-%d');allowed.setdefault(symbol,set()).add(day)
  if len(allowed)>2000:raise ValueError('До 2000 унікальних тикерів')
  clean={}
- for name,default,low,high in [('capital',10000,100,1e9),('fee',1,0,1000),('slippage',.1,0,10),('minVolume',500000,0,1e10),('minDollar',10000000,0,1e12)]:
+ for name,default,low,high in [('capital',10000,100,1e9),('riskUSD',0,0,1e8),('fee',1,0,1000),('slippage',.1,0,10),('minVolume',500000,0,1e10),('minDollar',10000000,0,1e12)]:
   value=float(settings.get(name,default))
   if not __import__('math').isfinite(value) or not low<=value<=high:raise ValueError('Некоректне значення '+name)
   clean[name]=value

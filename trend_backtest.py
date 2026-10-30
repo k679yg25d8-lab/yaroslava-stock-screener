@@ -24,49 +24,45 @@ def features(bars):
     return out
 
 def simulate(series,benchmark,allowed,settings,prepared=False):
-    index=features(benchmark);stock=series if prepared else {s:features(b) for s,b in series.items()};days=sorted(d for d in index if settings['start']<=d<=settings['end'])
-    cash=settings['capital'];initial=cash;positions={};pending={};trades=[];curve=[];peak=initial;max_dd=0
-    fee=settings['fee'];slip=settings['slippage']/100
-    def close(symbol,price,day,reason):
-        nonlocal cash
-        p=positions.pop(symbol);price=max(0,price*(1-slip));cash+=p['shares']*price-fee
-        pnl=(price-p['entry'])*p['shares']-2*fee
-        trades.append({**p,'symbol':symbol,'exit':price,'exitDate':day,'reason':reason,'pnl':pnl,'r':pnl/p['riskUSD'] if p['riskUSD'] else 0})
-    previous=None
+    index=features(benchmark);stock=series if prepared else {s:features(b) for s,b in series.items()}
+    days=sorted(d for d in index if settings["start"]<=d<=settings["end"])
+    cash=settings["capital"];initial=cash;pending={};trades=[];curve=[];peak=initial;max_dd=0;cost_skips=0
+    fee=settings["fee"];slip=settings["slippage"]/100
     for day in days:
-        # Execute only on the very next benchmark session, never a later available bar.
-        for symbol,p in list(positions.items()):
+        # Allocate ALL opening orders before closing any trade: no reuse of future profits.
+        opening_equity=cash;positions=[]
+        for symbol,signal in sorted(pending.items(),key=lambda item:(-item[1]["relative"],item[0])):
             today=stock[symbol].get(day)
             if not today:continue
-            if p.pop('exitNext',False):close(symbol,today['bar']['o'],day,'Мінімум 10 сесій');continue
-            if today['bar']['o']<=p['stop']:close(symbol,today['bar']['o'],day,'Геп за стоп');continue
-            if today['bar']['l']<=p['stop']:close(symbol,p['stop'],day,'Стоп 2 ATR')
-        for symbol,signal in sorted(pending.items(),key=lambda item:(-item[1]['relative'],item[0])):
-            today=stock[symbol].get(day)
-            if symbol in positions or not today:continue
-            entry=today['bar']['o']*(1+slip);risk=2*signal['atr'];stop=entry-risk
+            bar=today["bar"];entry=bar["o"]*(1+slip);risk=signal["atr"];stop=entry-risk
             if risk<=0 or stop<=0:continue
-            equity=cash+sum(p['shares']*(stock[s].get(previous,{}).get('bar',{}).get('c',p['entry'])) for s,p in positions.items())
-            shares=max(0,min(math.floor(max(0,equity)*.005/risk),math.floor(max(0,cash-2*fee)/(entry))))
+            budget=settings.get("riskUSD",0) or opening_equity*.005
+            shares=max(0,min(math.floor(max(0,budget)/risk),math.floor(max(0,cash-2*fee)/entry)))
             if not shares:continue
+            actual_risk=shares*risk
+            estimated_loss=(entry-min(bar["o"],stop)*(1-slip))*shares+2*fee
+            if estimated_loss>actual_risk*1.4+1e-8:
+                cost_skips+=1;continue
             cash-=entry*shares+fee
-            positions[symbol]={'entry':entry,'entryDate':day,'signalDate':signal['date'],'stop':stop,'shares':shares,'riskUSD':shares*risk}
-            if today['bar']['l']<=stop:close(symbol,min(today['bar']['o'],stop),day,'Стоп у день входу')
-        pending={}
-        market=index[day]['bar']['c']>index[day]['sma']
+            positions.append((symbol,bar,{"entry":entry,"entryDate":day,"signalDate":signal["date"],"stop":stop,"target":entry+6*risk,"shares":shares,"riskUSD":actual_risk,"requestedRiskUSD":budget,"maxLossUSD":actual_risk*1.4,"estimatedStopLoss":estimated_loss}))
+        for symbol,bar,p in positions:
+            stop_hit=bar["l"]<=p["stop"];target_hit=bar["h"]>=p["target"]
+            if stop_hit:
+                price=min(bar["o"],p["stop"]);reason="Стоп 1 ATR" if not target_hit else "Обидва рівні за день: консервативно стоп"
+            elif target_hit:price=p["target"];reason="Тейк 6R"
+            else:price=bar["c"];reason="Кінець основної сесії"
+            price=max(0,price*(1-slip));cash+=p["shares"]*price-fee
+            pnl=(price-p["entry"])*p["shares"]-2*fee
+            trades.append({**p,"symbol":symbol,"exit":price,"exitDate":day,"reason":reason,"pnl":pnl,"r":pnl/p["riskUSD"],"ambiguousBar":stop_hit and target_hit})
+        pending={};market=index[day]["bar"]["c"]>index[day]["sma"]
         for symbol,data in stock.items():
             f=data.get(day)
-            if not f:continue
-            if symbol in positions:
-                positions[symbol]['exitNext']=f['bar']['c']<f['low10']
-                positions[symbol]['lastClose']=f['bar']['c'];positions[symbol]['lastDate']=day
-            elif market and day in allowed.get(symbol,set()) and f['baseDate']==index[day]['baseDate'] and f['bar']['c']>f['sma'] and f['return']>index[day]['return'] and f['bar']['c']>f['high20'] and f['avgVol']>=settings['minVolume'] and f['avgDollar']>=settings['minDollar']:
-                pending[symbol]={'atr':f['atr'],'date':day,'relative':f['return']-index[day]['return']}
-        equity=cash+sum(p['shares']*p.get('lastClose',p['entry']) for p in positions.values());peak=max(peak,equity);dd=peak-equity;max_dd=max(max_dd,dd)
-        curve.append({'date':day,'equity':equity,'profit':equity-initial,'drawdown':dd});previous=day
-    # Open positions remain open at the test boundary; unrealized P&L is shown separately.
-    wins=[t for t in trades if t['pnl']>0];losses=[t for t in trades if t['pnl']<0]
-    return {'trades':trades,'curve':curve,'openPositions':[{'symbol':s,**p} for s,p in positions.items()],
-        'net':sum(t['pnl'] for t in trades),'grossProfit':sum(t['pnl'] for t in wins),'grossLoss':sum(t['pnl'] for t in losses),
-        'winPercent':len(wins)/len(trades)*100 if trades else 0,'lossPercent':len(losses)/len(trades)*100 if trades else 0,
-        'breakeven':len(trades)-len(wins)-len(losses),'maxDrawdown':max_dd,'equityProfit':curve[-1]['profit'] if curve else 0,'settings':settings}
+            if f and market and day in allowed.get(symbol,set()) and f["baseDate"]==index[day]["baseDate"] and f["bar"]["c"]>f["sma"] and f["return"]>index[day]["return"] and f["bar"]["c"]>f["high20"] and f["avgVol"]>=settings["minVolume"] and f["avgDollar"]>=settings["minDollar"]:
+                pending[symbol]={"atr":f["atr"],"date":day,"relative":f["return"]-index[day]["return"]}
+        peak=max(peak,cash);dd=peak-cash;max_dd=max(max_dd,dd)
+        curve.append({"date":day,"equity":cash,"profit":cash-initial,"drawdown":dd})
+    wins=[t for t in trades if t["pnl"]>0];losses=[t for t in trades if t["pnl"]<0]
+    return {"trades":trades,"curve":curve,"openPositions":[],"costSkips":cost_skips,
+        "net":sum(t["pnl"] for t in trades),"grossProfit":sum(t["pnl"] for t in wins),"grossLoss":sum(t["pnl"] for t in losses),
+        "winPercent":len(wins)/len(trades)*100 if trades else 0,"lossPercent":len(losses)/len(trades)*100 if trades else 0,
+        "breakeven":len(trades)-len(wins)-len(losses),"maxDrawdown":max_dd,"equityProfit":curve[-1]["profit"] if curve else 0,"settings":{**settings,"strategyVersion":"day-atr1-take6R-cap1.4","stopATR":1,"targetR":6,"maxLossR":1.4,"closeAt":"regular-session-close"}}
