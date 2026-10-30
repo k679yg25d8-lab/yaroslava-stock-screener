@@ -7,6 +7,7 @@ from flask import Flask,request,session,jsonify,send_from_directory,g
 from werkzeug.exceptions import HTTPException
 import server as engine
 import swing,trend_backtest
+import market_auto
 ROOT=Path(__file__).resolve().parent
 app=Flask(__name__,static_folder=None)
 app.config.update(SECRET_KEY=os.environ.get('SESSION_SECRET') or secrets.token_hex(32),MAX_CONTENT_LENGTH=1000000,SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Lax',SESSION_COOKIE_SECURE=os.environ.get('LOCAL_PREVIEW')!='1',PERMANENT_SESSION_LIFETIME=timedelta(hours=8))
@@ -179,3 +180,29 @@ def trend_cancel():
  body()
  if g.state.get('trend_job'):g.state['trend_job']['cancel']=True
  return jsonify(cancelled=True)
+
+AUTO_LOCK=threading.Lock()
+@app.post('/api/market-auto')
+def start_market_auto():
+ records=market_auto.validate(body().get('signals'))
+ if not g.state['key']:raise engine.APIError(503,'Підключіть ключ Polygon для автоматичного підсумку')
+ state=g.state;now=datetime.now(ZoneInfo('America/New_York'))
+ signature=engine.json.dumps(records,sort_keys=True)+now.date().isoformat()+str((now.hour,now.minute)>=(16,15))
+ old=state.get('auto_job')
+ if old and old['status']=='running':return jsonify(status='running',done=old['done'],total=old['total'])
+ if old and old['status']=='done' and state.get('auto_signature')==signature and (not old['result'].get('pending') and not old['result']['coverage']['errors'] or time.time()-old['checkedAt']<300):return jsonify(old)
+ if not AUTO_LOCK.acquire(blocking=False):raise engine.APIError(409,'Автопідсумок зайнятий. Буде повторено пізніше.')
+ job={'status':'running','done':0,'total':len({r['symbol'] for r in records})};state['auto_job']=job;state['auto_signature']=signature;key=state['key']
+ def work():
+  token=engine.CURRENT_KEY.set(key)
+  try:
+   def progress(done,total):job.update(done=done,total=total)
+   result=market_auto.settle(records,now,progress)
+   job.update(result=result,checkedAt=time.time(),status='done')
+  except Exception as exc:job.update(status='error',error=getattr(exc,'message','Не вдалося розрахувати автопідсумок: '+str(exc)[:120]))
+  finally:engine.CURRENT_KEY.reset(token);AUTO_LOCK.release()
+ threading.Thread(target=work,daemon=True).start()
+ return jsonify(status='running',done=0,total=job['total'])
+
+@app.get('/api/market-auto')
+def market_auto_status():return jsonify(g.state.get('auto_job') or {'status':'idle'})
