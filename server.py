@@ -67,22 +67,23 @@ def nasdaq_tickers():
     NASDAQ_CACHE.update(expires=time.time()+43200, tickers=records)
     return records
 
-def minute_bars(symbol, date):
-    key = (symbol, str(date))
+def minute_bars(symbol, date, start_date=None):
+    start_date = start_date or date-timedelta(days=7)
+    key = (symbol, str(date), str(start_date))
     cached = BAR_CACHE.get(key)
     ttl = 300 if datetime.now(ZoneInfo('America/New_York')).hour*60+datetime.now(ZoneInfo('America/New_York')).minute>=570 else 5
     if cached and time.time()-cached[0] < ttl:
         return cached[1]
-    start = date - timedelta(days=7)
+    start = start_date
     data = api_json(f'/v2/aggs/ticker/{urllib.parse.quote(symbol)}/range/1/minute/{start}/{date}?adjusted=true&sort=asc&limit=50000')
     if data.get('next_url'):
         raise APIError(422, 'Неповна історія хвилин: потрібна пагінація')
     bars = data.get('results') or []
-    BAR_CACHE[key] = (time.time(), bars[-5000:])
-    if len(BAR_CACHE) > 1000:
+    BAR_CACHE[key] = (time.time(), bars)
+    if len(BAR_CACHE) > 32:
         oldest = min(BAR_CACHE, key=lambda k: BAR_CACHE[k][0])
         del BAR_CACHE[oldest]
-    return bars[-5000:]
+    return bars
 
 def signal_from_bars(bars, now):
     now_ms = int(now.timestamp()*1000)
@@ -113,7 +114,11 @@ def signal_from_bars(bars, now):
     chosen = touches[-1] if touches else last_band
     bar = chosen['bar'] if chosen else {}
     sma = chosen['sma'] if chosen else None
-    return {'premarketHigh': max((b['h'] for b in session if isinstance(b.get('h'),(int,float))),default=None),
+    opening=session[0].get('o') if session else None
+    high=max((b['h'] for b in session if isinstance(b.get('h'),(int,float))),default=None)
+    return {'premarketOpen':opening,'premarketOpenTimestamp':session[0]['t'] if session else None,
+        'premarketFromOpenGrowthPercent':(high/opening-1)*100 if isinstance(high,(int,float)) and isinstance(opening,(int,float)) and opening>0 else None,
+        'premarketHigh': max((b['h'] for b in session if isinstance(b.get('h'),(int,float))),default=None),
         'premarketVolume': volume if valid_volume else None,
         'volumeProvenance': 'Сума minute.v за 04:00–09:30 ET цього дня',
         'upperBand': chosen['upper'] if chosen else None,
@@ -164,31 +169,32 @@ def daily_metrics(symbol, now, current_bars):
 
 
 PREVIOUS_SESSION_CACHE = {}
-def previous_session(now):
-    key = str(now.date())
+def previous_sessions(now):
+    key=str(now.date())
     if key not in PREVIOUS_SESSION_CACHE:
-        start, end = now.date()-timedelta(days=14), now.date()-timedelta(days=1)
-        data = api_json(f'/v2/aggs/ticker/SPY/range/1/day/{start}/{end}?adjusted=true&sort=asc&limit=100')
-        if data.get('next_url'):
-            raise APIError(502, 'Неповний календар торгових днів')
-        days = [datetime.fromtimestamp(b['t']/1000,ZoneInfo('America/New_York')).date() for b in data.get('results',[]) if isinstance(b.get('t'),(int,float))]
-        days = [d for d in days if d<now.date()]
-        if not days:
-            raise APIError(502, 'Попередній торговий день не підтверджено')
-        PREVIOUS_SESSION_CACHE.clear()
-        PREVIOUS_SESSION_CACHE[key] = max(days)
+        start,end=now.date()-timedelta(days=21),now.date()-timedelta(days=1)
+        data=api_json(f"/v2/aggs/ticker/SPY/range/1/day/{start}/{end}?adjusted=true&sort=desc&limit=100")
+        if data.get("next_url"):raise APIError(502,"Неповний календар торгових днів")
+        days=sorted({datetime.fromtimestamp(b["t"]/1000,ZoneInfo("America/New_York")).date() for b in data.get("results",[]) if isinstance(b.get("t"),(int,float))},reverse=True)
+        days=[d for d in days if d<now.date()][:3]
+        if len(days)!=3:raise APIError(502,"Не підтверджено три попередні торгові дні")
+        PREVIOUS_SESSION_CACHE.clear();PREVIOUS_SESSION_CACHE[key]=days
     return PREVIOUS_SESSION_CACHE[key]
 
-def previous_activity(bars, day):
-    at = datetime.combine(day,datetime.min.time(),tzinfo=ZoneInfo('America/New_York')).replace(hour=9,minute=30)
-    day_bars = [b for b in bars if isinstance(b.get('t'),(int,float)) and datetime.fromtimestamp(b['t']/1000,at.tzinfo).date()==day]
-    if not day_bars:
-        return {'activePreviousDays':None,'previousActivityDate':str(day),'previousActivityError':'Немає історії попереднього торгового дня'}
-    result = signal_from_bars(bars,at)
-    pm = [b for b in day_bars if 240<=datetime.fromtimestamp(b['t']/1000,at.tzinfo).hour*60+datetime.fromtimestamp(b['t']/1000,at.tzinfo).minute<570]
-    volume = result['premarketVolume'] if pm else 0
-    active = False if volume is not None and volume<=300000 else result['bandTouch'] if volume is not None else None
-    return {'activePreviousDays':active,'previousActivityDate':str(day),'previousPremarketVolume':volume,'previousBandTouch':result['bandTouch']}
+def previous_session(now):return previous_sessions(now)[0]
+
+def previous_activity(bars,days):
+    zone=ZoneInfo("America/New_York");summary=[]
+    if not isinstance(days,(list,tuple)):days=[days]
+    for day in days:
+        session=[b for b in bars if isinstance(b.get("t"),(int,float)) and datetime.fromtimestamp(b["t"]/1000,zone).date()==day and 240<=datetime.fromtimestamp(b["t"]/1000,zone).hour*60+datetime.fromtimestamp(b["t"]/1000,zone).minute<1200]
+        valid=bool(session) and all(isinstance(b.get("h"),(int,float)) and isinstance(b.get("l"),(int,float)) and b["l"]>0 for b in session)
+        high=max((b["h"] for b in session),default=None) if valid else None
+        low=min((b["l"] for b in session),default=None) if valid else None
+        active=high>=low*1.10 if valid else None
+        summary.append({"date":str(day),"high":high,"low":low,"rangePercent":(high/low-1)*100 if valid else None,"active":active})
+    active=True if any(d["active"] is True for d in summary) else False if len(summary)==3 and all(d["active"] is False for d in summary) else None
+    return {"activePreviousDays":active,"previousActivityDays":summary,"previousActivityDate":", ".join(str(day) for day in days),"previousActivityProvenance":"Три попередні сесії SPY; High/Low від 04:00 до 20:00 ET, включно з постмаркетом; активність ≥10%"}
 
 def scan_market(tickers, price_min, price_max, volume_min, profile="main"):
     from concurrent.futures import ThreadPoolExecutor
@@ -201,10 +207,10 @@ def scan_market(tickers, price_min, price_max, volume_min, profile="main"):
     now = datetime.now(ZoneInfo('America/New_York'))
     now_ms = int(now.timestamp()*1000)
     try:
-        prior_day = previous_session(now)
+        prior_days = previous_sessions(now)
         prior_error = None
     except APIError as err:
-        prior_day, prior_error = None, err.message
+        prior_days, prior_error = None, err.message
     rows, candidates = [], []
     start_ms = int(now.replace(hour=4,minute=0,second=0,microsecond=0).timestamp()*1000)
     end_ms = int(now.replace(hour=9,minute=30,second=0,microsecond=0).timestamp()*1000)
@@ -243,7 +249,7 @@ def scan_market(tickers, price_min, price_max, volume_min, profile="main"):
             candidates.append(row)
     def enrich(row):
         try:
-            bars = minute_bars(row['symbol'],now.date())
+            bars = minute_bars(row['symbol'],now.date(),prior_days[-1] if prior_days else now.date()-timedelta(days=14))
             row.update(signal_from_bars(bars,now))
             high,previous=row.get('premarketHigh'),row.get('previousClose')
             row['premarketGrowthPercent']=(high/previous-1)*100 if isinstance(high,(int,float)) and isinstance(previous,(int,float)) and previous>0 else None
@@ -252,8 +258,8 @@ def scan_market(tickers, price_min, price_max, volume_min, profile="main"):
             if main_setup or kush_setup:
                 try:
                     row.update(daily_metrics(row['symbol'],now,bars))
-                    if prior_day is not None:
-                        row.update(previous_activity(bars,prior_day))
+                    if prior_days is not None:
+                        row.update(previous_activity(bars,prior_days))
                     else:
                         row.update(activePreviousDays=None,previousActivityError=prior_error)
                 except APIError as err:
