@@ -85,6 +85,23 @@ def minute_bars(symbol, date, start_date=None):
         del BAR_CACHE[oldest]
     return bars
 
+def fast_pump(session):
+    # Five actual one-minute intervals, not five potentially sparse candles.
+    from collections import deque
+    starts=deque();best=None
+    for bar in session:
+        stamp=bar["t"]
+        while starts and stamp-starts[0]["t"]>=300000:starts.popleft()
+        opening=bar.get("o");high=bar.get("h")
+        if isinstance(opening,(int,float)) and opening>0:
+            while starts and starts[-1]["o"]>opening:starts.pop()
+            starts.append(bar)
+        if starts and isinstance(high,(int,float)):
+            first=starts[0];gain=(high/first["o"]-1)*100
+            if best is None or gain>best["fastPumpPercent"]:
+                best={"fastPumpPercent":gain,"fastPumpStartPrice":first["o"],"fastPumpHigh":high,"fastPumpStartTimestamp":first["t"],"fastPumpEndTimestamp":stamp}
+    return best or {"fastPumpPercent":None,"fastPumpStartPrice":None,"fastPumpHigh":None,"fastPumpStartTimestamp":None,"fastPumpEndTimestamp":None}
+
 def signal_from_bars(bars, now):
     now_ms = int(now.timestamp()*1000)
     start = now.replace(hour=4, minute=0, second=0, microsecond=0)
@@ -116,7 +133,7 @@ def signal_from_bars(bars, now):
     sma = chosen['sma'] if chosen else None
     opening=session[0].get('o') if session else None
     high=max((b['h'] for b in session if isinstance(b.get('h'),(int,float))),default=None)
-    return {'premarketOpen':opening,'premarketOpenTimestamp':session[0]['t'] if session else None,
+    return {**fast_pump(session),'premarketOpen':opening,'premarketOpenTimestamp':session[0]['t'] if session else None,
         'premarketFromOpenGrowthPercent':(high/opening-1)*100 if isinstance(high,(int,float)) and isinstance(opening,(int,float)) and opening>0 else None,
         'premarketHigh': max((b['h'] for b in session if isinstance(b.get('h'),(int,float))),default=None),
         'premarketVolume': volume if valid_volume else None,
