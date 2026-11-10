@@ -44,7 +44,7 @@ def headers(response):
  response.headers['Cache-Control']='no-store'
  response.headers['X-Content-Type-Options']='nosniff'
  response.headers['Referrer-Policy']='same-origin'
- response.headers['X-Frame-Options']='DENY'
+ response.headers['X-Frame-Options']='SAMEORIGIN' if request.path=='/market' and request.args.get('embedded')=='1' else 'DENY'
  return response
 @app.errorhandler(Exception)
 def error(exc):
