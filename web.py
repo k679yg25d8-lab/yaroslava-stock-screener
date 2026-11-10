@@ -99,7 +99,7 @@ def market_candidate_batch():
  return jsonify(rows=rows,errors=errors)
 @app.get('/<name>')
 def assets(name):
- if name not in ('market-embed.js','market-candidates.js','market-journal.js','market.js','app.js','alerts.js','core.js','bands.js','charts.js','history.js','style.css','dark-forest.png'):return jsonify(error='Not found'),404
+ if name not in ('stock-chart.js','market-embed.js','market-candidates.js','market-journal.js','market.js','app.js','alerts.js','core.js','bands.js','charts.js','history.js','style.css','dark-forest.png'):return jsonify(error='Not found'),404
  return send_from_directory(ROOT,name)
 def body():
  data=request.get_json()
