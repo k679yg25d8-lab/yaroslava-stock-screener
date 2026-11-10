@@ -62,7 +62,9 @@ def index():
  return text
 @app.get('/market')
 def swing_page():
- return (ROOT/'market.html').read_text().replace('<body>',f'<body><meta name="local-nonce" content="{g.state["nonce"]}">')
+ text=(ROOT/'market.html').read_text().replace('<body>',f'<body><meta name="local-nonce" content="{g.state["nonce"]}">')
+ if request.args.get('embedded')=='1':text=text.replace('<body>','<style>html,body{background:transparent!important;min-height:0!important;overflow-x:hidden}body>header{display:none}main{padding:0;max-width:none}main>h1{margin-top:10px}</style><body>')
+ return text
 @app.get('/market-archive')
 def market_archive():
  return (ROOT/'market-archive.html').read_text().replace('<body>',f'<body><meta name="local-nonce" content="{g.state["nonce"]}">')
@@ -74,6 +76,8 @@ def market_candidate_universe():
  return jsonify(result)
 @app.get('/api/market-candidates/batch')
 def market_candidate_batch():
+ from concurrent.futures import ThreadPoolExecutor
+ from contextvars import copy_context
  symbols=request.args.get('symbols','').upper().split(',')
  if not 1<=len(symbols)<=4 or any(not re.fullmatch(r'[A-Z0-9._-]{1,20}',s) for s in symbols):raise ValueError('Некоректні тикери')
  now=datetime.now(ZoneInfo('America/New_York'));prior=g.state.get('market_candidates',{})
@@ -81,14 +85,21 @@ def market_candidate_batch():
  rows=[];errors=[]
  for symbol in symbols:
   if symbol not in prior:raise ValueError('Спочатку запустіть відбір')
-  try:rows.append(market_candidates.candidate(symbol,prior[symbol],now))
+ def check(symbol):
+  try:return market_candidates.candidate(symbol,prior[symbol],now),None
   except engine.APIError as exc:
    if exc.status in (401,403,429):raise
-   errors.append(dict(symbol=symbol,error=exc.message))
+   return None,dict(symbol=symbol,error=exc.message)
+ with ThreadPoolExecutor(max_workers=4) as pool:
+  jobs=[pool.submit(copy_context().run,check,symbol) for symbol in symbols]
+  for job in jobs:
+   row,error=job.result()
+   if row:rows.append(row)
+   if error:errors.append(error)
  return jsonify(rows=rows,errors=errors)
 @app.get('/<name>')
 def assets(name):
- if name not in ('market-candidates.js','market-journal.js','market.js','app.js','alerts.js','core.js','bands.js','charts.js','history.js','style.css','dark-forest.png'):return jsonify(error='Not found'),404
+ if name not in ('market-embed.js','market-candidates.js','market-journal.js','market.js','app.js','alerts.js','core.js','bands.js','charts.js','history.js','style.css','dark-forest.png'):return jsonify(error='Not found'),404
  return send_from_directory(ROOT,name)
 def body():
  data=request.get_json()
