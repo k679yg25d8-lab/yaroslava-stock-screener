@@ -8,6 +8,7 @@ from werkzeug.exceptions import HTTPException
 import server as engine
 import swing,trend_backtest
 import market_auto
+import market_candidates
 ROOT=Path(__file__).resolve().parent
 app=Flask(__name__,static_folder=None)
 app.config.update(SECRET_KEY=os.environ.get('SESSION_SECRET') or secrets.token_hex(32),MAX_CONTENT_LENGTH=1000000,SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Lax',SESSION_COOKIE_SECURE=os.environ.get('LOCAL_PREVIEW')!='1',PERMANENT_SESSION_LIFETIME=timedelta(hours=8))
@@ -62,9 +63,32 @@ def index():
 @app.get('/market')
 def swing_page():
  return (ROOT/'market.html').read_text().replace('<body>',f'<body><meta name="local-nonce" content="{g.state["nonce"]}">')
+@app.get('/market-archive')
+def market_archive():
+ return (ROOT/'market-archive.html').read_text().replace('<body>',f'<body><meta name="local-nonce" content="{g.state["nonce"]}">')
+@app.get('/api/market-candidates/universe')
+def market_candidate_universe():
+ result=market_candidates.universe()
+ g.state['market_candidates']={r['symbol']:r['previousClose'] for r in result['candidates']}
+ g.state['market_candidates_day']=str(datetime.now(ZoneInfo('America/New_York')).date())
+ return jsonify(result)
+@app.get('/api/market-candidates/batch')
+def market_candidate_batch():
+ symbols=request.args.get('symbols','').upper().split(',')
+ if not 1<=len(symbols)<=4 or any(not re.fullmatch(r'[A-Z0-9._-]{1,20}',s) for s in symbols):raise ValueError('Некоректні тикери')
+ now=datetime.now(ZoneInfo('America/New_York'));prior=g.state.get('market_candidates',{})
+ if g.state.get('market_candidates_day')!=str(now.date()):raise ValueError('Оновіть список кандидатів')
+ rows=[];errors=[]
+ for symbol in symbols:
+  if symbol not in prior:raise ValueError('Спочатку запустіть відбір')
+  try:rows.append(market_candidates.candidate(symbol,prior[symbol],now))
+  except engine.APIError as exc:
+   if exc.status in (401,403,429):raise
+   errors.append(dict(symbol=symbol,error=exc.message))
+ return jsonify(rows=rows,errors=errors)
 @app.get('/<name>')
 def assets(name):
- if name not in ('market-journal.js','market.js','app.js','alerts.js','core.js','bands.js','charts.js','history.js','style.css','dark-forest.png'):return jsonify(error='Not found'),404
+ if name not in ('market-candidates.js','market-journal.js','market.js','app.js','alerts.js','core.js','bands.js','charts.js','history.js','style.css','dark-forest.png'):return jsonify(error='Not found'),404
  return send_from_directory(ROOT,name)
 def body():
  data=request.get_json()
