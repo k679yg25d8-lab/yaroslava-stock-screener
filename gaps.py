@@ -1,5 +1,6 @@
 """Earnings opening-gap scanner and bar-based replay."""
 from collections import defaultdict
+import re
 from datetime import date, datetime, timedelta, time
 from functools import lru_cache
 from pathlib import Path
@@ -57,6 +58,46 @@ def releases(first, last, symbol=None):
         if published.time() == time(0):
             continue
         yield item['ticker'], published
+
+
+# Require a results announcement rather than previews or market commentary.
+RESULTS = re.compile(
+    r"\b(?:reports?|announces?|releases?|posts?)\b.{0,100}"
+    r"\b(?:financial results|earnings results|quarterly results|fiscal results|"
+    r"results for|quarter results|full.year results)\b", re.I)
+PREVIEW = re.compile(r"\b(?:will|to|plans to|scheduled to|sets date to)\s+"
+                     r"(?:report|announce|release|post)\b", re.I)
+WIRE = re.compile(r"globenewswire|business wire|pr newswire|accesswire|newsfile", re.I)
+
+
+def news_releases(first, last, symbol=None):
+    start = datetime.combine(first, time(), NY)
+    end = datetime.combine(last + timedelta(days=1), time(), NY)
+    params = {'published_utc.gte': start.isoformat(),
+              'published_utc.lt': end.isoformat(),
+              'sort': 'published_utc', 'order': 'asc', 'limit': 1000}
+    if symbol:
+        params['ticker'] = symbol
+    for item in request('/v2/reference/news', **params):
+        publisher = (item.get('publisher') or {}).get('name', '')
+        title = item.get('title') or ''
+        if not WIRE.search(publisher) or not RESULTS.search(title) or PREVIEW.search(title):
+            continue
+        tickers = item.get('tickers') or []
+        if len(tickers) != 1 or (symbol and tickers[0] != symbol):
+            continue
+        published = datetime.fromisoformat(item['published_utc'].replace('Z', '+00:00')).astimezone(NY)
+        yield tickers[0], published
+
+
+def release_lookup(first, last, symbol=None, source='auto'):
+    if source != 'news':
+        try:
+            return list(releases(first, last, symbol)), 'earnings'
+        except APIError as exc:
+            if exc.status != 403:
+                raise
+    return list(news_releases(first, last, symbol)), 'news'
 
 
 def opening(day):
@@ -207,12 +248,16 @@ def simulate(entries, bars_by_slot, spread_bps, slip_bps):
     return result
 
 
-def replay(event, threshold, spread_bps, slip_bps):
+def replay(event, threshold, spread_bps, slip_bps, source='auto'):
     symbol = event['symbol']
     report_day = date.fromisoformat(event['date'])
+    reports, source = release_lookup(report_day, report_day, symbol, source)
+    event = dict(event, source=source)
+    if not reports:
+        return dict(event, status='unconfirmed')
     calendar = sessions(report_day)
     candidates = [d for d in calendar if d >= report_day][:2]
-    for _, published in sorted(releases(report_day, report_day, symbol), key=lambda x: x[1]):
+    for _, published in sorted(reports, key=lambda x: x[1]):
         for day in candidates:
             index = calendar.index(day)
             if not index or not belongs(published, calendar[index - 1], day):
@@ -234,14 +279,15 @@ def live_universe(now):
     calendar = sessions(day - timedelta(days=1))
     past = [d for d in calendar if d < day]
     if not past or day.weekday() >= 5 or (now >= opening(day) + timedelta(hours=7) and day not in calendar):
-        return []
+        return [], None
     previous = past[-1]
     confirmed = {}
-    for symbol, published in releases(previous, day):
+    reports, source = release_lookup(previous, day)
+    for symbol, published in reports:
         if published <= now and belongs(published, previous, day):
             confirmed[symbol] = min(published, confirmed.get(symbol, published))
     return [dict(symbol=symbol, release=published.isoformat())
-            for symbol, published in sorted(confirmed.items())]
+            for symbol, published in sorted(confirmed.items())], source
 
 
 def live_row(event, now, threshold):

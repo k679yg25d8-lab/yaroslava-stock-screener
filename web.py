@@ -250,9 +250,9 @@ def gaps_events():
 @app.get('/api/gaps/live')
 def gaps_universe():
  now=datetime.now(gaps.NY)
- rows=gaps.live_universe(now)
+ rows,source=gaps.live_universe(now)
  g.state['gaps_universe']=(now.date(),{r['symbol']:r for r in rows})
- return jsonify(rows=rows,asOf=now.isoformat())
+ return jsonify(rows=rows,asOf=now.isoformat(),source=source)
 
 @app.get('/api/gaps/live/<symbol>')
 def gaps_live(symbol):
@@ -282,21 +282,24 @@ def gaps_test_start():
   g.state['gaps_test']=job
  def run():
   token=engine.CURRENT_KEY.set(key)
+  source='auto'
   try:
    for event in events:
     for attempt in range(3):
      try:
-      row=gaps.replay(event,threshold,spread,slip)
+      row=gaps.replay(event,threshold,spread,slip,source)
+      source=row['source']
       break
      except engine.APIError as exc:
       if exc.status==429 and attempt<2:
        time.sleep(60)
        continue
-      if exc.status in (401,403,429):
+      if exc.status in (401,429):
        raise
       row=dict(event,status='error',error=exc.message)
       break
     with LOCK:
+     job['source']=source
      job['rows'].append(row)
      job['done']+=1
    with LOCK:

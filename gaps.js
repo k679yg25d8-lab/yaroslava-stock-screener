@@ -84,7 +84,7 @@
     $('gaps-refresh').disabled = true;
     $('gaps-status').textContent = 'Шукаю підтверджені звіти…';
     try {
-      const {rows, asOf} = await api('/api/gaps/live');
+      const {rows, asOf, source} = await api('/api/gaps/live');
       const done = [];
       const rvol = $('gaps-rvol').valueAsNumber;
       updateLive(rows.map(row => ({...row, stage: 'waiting'})));
@@ -97,9 +97,11 @@
         updateLive([...done, ...rows.slice(done.length).map(row => ({...row, stage: 'waiting'}))]);
         $('gaps-status').textContent = 'Перевірено ' + done.length + ' із ' + rows.length;
       }
-      $('gaps-status').textContent = rows.length
-        ? rows.length + ' звітів · оновлено ' + et.format(new Date(asOf)) + ' ET · затримка залежить від тарифу'
-        : 'Підтверджених звітів для цієї сесії немає';
+      const status = rows.length
+        ? rows.length + ' звітів · оновлено ' + et.format(new Date(asOf)) + ' ET'
+        : 'Звітів для цієї сесії не знайдено';
+      $('gaps-status').textContent = status + (source === 'news'
+        ? ' · Ticker News: час пресрелізу, стрічка оновлюється щогодини' : '');
     } catch (error) {
       $('gaps-status').textContent = error.message;
     } finally {
@@ -121,6 +123,7 @@
       $('gaps-test-status').textContent = [
         job.error || (job.status === 'running' ? 'Тест триває' : 'Тест завершено'),
         job.done + '/' + job.total,
+        ...(job.source === 'news' ? ['Джерело: пресрелізи Ticker News'] : []),
         'З даними ' + (counts.ok || 0),
         'Без підтвердження ' + (counts.unconfirmed || 0),
         'Без повних барів ' + (counts.missing_bars || 0),
