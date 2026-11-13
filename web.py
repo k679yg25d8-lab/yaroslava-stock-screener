@@ -9,6 +9,7 @@ import server as engine
 import swing,trend_backtest
 import market_auto
 import market_candidates
+import gaps
 ROOT=Path(__file__).resolve().parent
 app=Flask(__name__,static_folder=None)
 app.config.update(SECRET_KEY=os.environ.get('SESSION_SECRET') or secrets.token_hex(32),MAX_CONTENT_LENGTH=1000000,SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Lax',SESSION_COOKIE_SECURE=os.environ.get('LOCAL_PREVIEW')!='1',PERMANENT_SESSION_LIFETIME=timedelta(hours=8))
@@ -99,7 +100,7 @@ def market_candidate_batch():
  return jsonify(rows=rows,errors=errors)
 @app.get('/<name>')
 def assets(name):
- if name not in ('stock-chart.js','market-embed.js','market-candidates.js','market-journal.js','market.js','app.js','alerts.js','core.js','bands.js','charts.js','history.js','style.css','dark-forest.png'):return jsonify(error='Not found'),404
+ if name not in ('gaps.js','stock-chart.js','market-embed.js','market-candidates.js','market-journal.js','market.js','app.js','alerts.js','core.js','bands.js','charts.js','history.js','style.css','dark-forest.png'):return jsonify(error='Not found'),404
  return send_from_directory(ROOT,name)
 def body():
  data=request.get_json()
@@ -241,3 +242,76 @@ def start_market_auto():
 
 @app.get('/api/market-auto')
 def market_auto_status():return jsonify(g.state.get('auto_job') or {'status':'idle'})
+
+@app.get('/api/gaps/events')
+def gaps_events():
+ return jsonify(gaps.watchlist())
+
+@app.get('/api/gaps/live')
+def gaps_universe():
+ now=datetime.now(gaps.NY)
+ rows=gaps.live_universe(now)
+ g.state['gaps_universe']=(now.date(),{r['symbol']:r for r in rows})
+ return jsonify(rows=rows,asOf=now.isoformat())
+
+@app.get('/api/gaps/live/<symbol>')
+def gaps_live(symbol):
+ now=datetime.now(gaps.NY)
+ day,universe=g.state.get('gaps_universe',(None,{}))
+ if day!=now.date() or symbol not in universe:raise ValueError('Оновіть список звітів')
+ return jsonify(gaps.live_row(universe[symbol],now,gaps_threshold()))
+
+def gaps_threshold():
+ value=float(request.args.get('rvol',2))
+ if not 1<=value<=20:raise ValueError('RVOL має бути від 1 до 20')
+ return value
+
+@app.post('/api/gaps/test')
+def gaps_test_start():
+ params=body()
+ threshold,spread,slip=(float(params[k]) for k in ('rvol','spread','slippage'))
+ if not (1<=threshold<=20 and 0<=spread<=500 and 0<=slip<=500):
+  raise ValueError('Перевірте межі RVOL, спреду й прослизання')
+ key=g.state['key']
+ if not key:raise engine.APIError(503,'Введіть ключ Polygon через кнопку «Ключ API»')
+ with LOCK:
+  if g.state.get('gaps_test',{}).get('status')=='running':
+   return jsonify(status='running')
+  events=gaps.watchlist()
+  job={'status':'running','total':len(events),'done':0,'rows':[]}
+  g.state['gaps_test']=job
+ def run():
+  token=engine.CURRENT_KEY.set(key)
+  try:
+   for event in events:
+    for attempt in range(3):
+     try:
+      row=gaps.replay(event,threshold,spread,slip)
+      break
+     except engine.APIError as exc:
+      if exc.status==429 and attempt<2:
+       time.sleep(60)
+       continue
+      if exc.status in (401,403,429):
+       raise
+      row=dict(event,status='error',error=exc.message)
+      break
+    with LOCK:
+     job['rows'].append(row)
+     job['done']+=1
+   with LOCK:
+    job.update(status='complete',summary=gaps.summarize(job['rows']))
+  except Exception as exc:
+   with LOCK:
+    job.update(status='failed',error=exc.message if isinstance(exc,engine.APIError)
+               else 'Помилка під час бектесту',summary=gaps.summarize(job['rows']))
+  finally:
+   engine.CURRENT_KEY.reset(token)
+ threading.Thread(target=run,daemon=True).start()
+ return jsonify(status='running')
+
+@app.get('/api/gaps/test')
+def gaps_test_status():
+ with LOCK:
+  job=g.state.get('gaps_test',{'status':'idle'})
+  return jsonify(job)
