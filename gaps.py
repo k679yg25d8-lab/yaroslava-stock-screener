@@ -248,30 +248,40 @@ def simulate(entries, bars_by_slot, spread_bps, slip_bps):
     return result
 
 
+def replay_session(event, day, calendar, threshold, spread_bps, slip_bps):
+    event = dict(event, session=str(day))
+    if datetime.now(NY) < opening(day) + timedelta(hours=1):
+        return dict(event, status='pending')
+    series, baseline, previous = read_inputs(event['symbol'], day, calendar)
+    if not series or not baseline or not previous or any(i not in series for i in (*range(5), 29)):
+        return dict(event, status='missing_bars')
+    result = evaluate(series, baseline, 30, threshold)
+    return dict(event, status='ok', gap=100 * (series[0]['o'] / previous - 1),
+                rvol=result['rvol'],
+                results=simulate(result['entries'], series, spread_bps, slip_bps))
+
+
 def replay(event, threshold, spread_bps, slip_bps, source='auto'):
     symbol = event['symbol']
     report_day = date.fromisoformat(event['date'])
     reports, source = release_lookup(report_day, report_day, symbol, source)
     event = dict(event, source=source)
-    if not reports:
-        return dict(event, status='unconfirmed')
     calendar = sessions(report_day)
     candidates = [d for d in calendar if d >= report_day][:2]
     for _, published in sorted(reports, key=lambda x: x[1]):
         for day in candidates:
             index = calendar.index(day)
-            if not index or not belongs(published, calendar[index - 1], day):
-                continue
-            if datetime.now(NY) < opening(day) + timedelta(hours=1):
-                return dict(event, status='pending')
-            series, baseline, previous = read_inputs(symbol, day, calendar)
-            if not series or not baseline or not previous or any(i not in series for i in (*range(5), 29)):
-                return dict(event, status='missing_bars')
-            result = evaluate(series, baseline, 30, threshold)
-            return dict(event, status='ok', session=str(day), release=published.isoformat(),
-                        gap=100 * (series[0]['o'] / previous - 1), rvol=result['rvol'],
-                        results=simulate(result['entries'], series, spread_bps, slip_bps))
-    return dict(event, status='unconfirmed')
+            if index and belongs(published, calendar[index - 1], day):
+                return replay_session(dict(event, release=published.isoformat()), day, calendar,
+                                      threshold, spread_bps, slip_bps)
+    if reports:
+        return dict(event, status='unconfirmed')
+    scenarios = {}
+    for label, day in [('same_day', next((d for d in candidates if d == report_day), None)),
+                       ('next_day', next((d for d in candidates if d > report_day), None))]:
+        if day:
+            scenarios[label] = replay_session(event, day, calendar, threshold, spread_bps, slip_bps)
+    return dict(event, status='unconfirmed', scenarios=scenarios)
 
 
 def live_universe(now):
@@ -310,9 +320,15 @@ def live_row(event, now, threshold):
 def summarize(rows):
     valid = sorted((r for r in rows if r['status'] == 'ok'), key=lambda r: (r['session'], r['symbol']))
     report = []
-    for split, subset in (('До вересня', [r for r in valid if r['session'] < '2026-09-01']),
-                          ('Вересень і далі', [r for r in valid if r['session'] >= '2026-09-01']),
-                          ('Усі дати', valid)):
+    groups = [('До вересня · підтверджені', [r for r in valid if r['session'] < '2026-09-01']),
+              ('Вересень і далі · підтверджені', [r for r in valid if r['session'] >= '2026-09-01']),
+              ('Усі дати · підтверджені', valid)]
+    for key, label in (('same_day', 'Дата з файла · час невідомий'),
+                       ('next_day', 'Наступна сесія · час невідомий')):
+        scenario = [r['scenarios'][key] for r in rows if key in r.get('scenarios', {})]
+        groups.append((label, sorted((r for r in scenario if r['status'] == 'ok'),
+                                     key=lambda r: (r['session'], r['symbol']))))
+    for split, subset in groups:
         for name in STRATEGIES:
             results = [r['results'][name] for r in subset if name in r['results']]
             running = peak = drawdown = 0
@@ -321,6 +337,6 @@ def summarize(rows):
                 peak = max(peak, running)
                 drawdown = max(drawdown, peak - running)
             report.append(dict(split=split, strategy=name, count=len(results),
-                               mean=running / len(results) if results else None,
+                               coverage=len(subset), mean=running / len(results) if results else None,
                                drawdown=drawdown if results else None))
     return report

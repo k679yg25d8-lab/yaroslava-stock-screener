@@ -117,6 +117,8 @@
       if (job.status === 'idle') return;
       const counts = {};
       for (const row of job.rows) counts[row.status] = (counts[row.status] || 0) + 1;
+      const scenarios = job.rows.flatMap(row => Object.values(row.scenarios || {}));
+      const scenarioCoverage = scenarios.filter(row => row.status === 'ok').length;
       testRows = job.rows;
       $('gaps-export').disabled = !testRows.length;
       $('gaps-backtest').disabled = job.status === 'running';
@@ -126,12 +128,13 @@
         ...(job.source === 'news' ? ['Джерело: пресрелізи Ticker News'] : []),
         'З даними ' + (counts.ok || 0),
         'Без підтвердження ' + (counts.unconfirmed || 0),
+        ...(scenarios.length ? ['Сценарії зі свічками ' + scenarioCoverage + '/' + scenarios.length] : []),
         'Без повних барів ' + (counts.missing_bars || 0),
         'Очікуються ' + (counts.pending || 0),
         'Помилки ' + (counts.error || 0)
       ].join(' · ');
       render('gaps-results', (job.summary || []).map(r =>
-        [r.split, strategy[r.strategy], r.count, number(r.mean), number(r.drawdown)]));
+        [r.split + ' · зі свічками ' + r.coverage, strategy[r.strategy], r.count, number(r.mean), number(r.drawdown)]));
       if (job.status === 'running') testTimer = setTimeout(checkTest, 4000);
     } catch (error) {
       $('gaps-test-status').textContent = error.message;
